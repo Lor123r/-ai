@@ -29,13 +29,16 @@ afterEach(async () => {
 interface SetupResult {
   invoke: () => Promise<unknown>
   invokeCover: (bookId: unknown) => Promise<BookCover | null>
+  invokeContent: (bookId: unknown) => Promise<Uint8Array | null>
   repository: InMemoryBookRepository
+  fileStore: FileBookStore
   showOpenDialog: ReturnType<typeof vi.fn>
 }
 
 /** 用假的 ipcMain 与假的 dialog 抓取协议行为，不必真的启动 Electron。 */
 function setup(filePaths: string[] = [], canceled = false): SetupResult {
   const repository = new InMemoryBookRepository()
+  const fileStore = new FileBookStore({ userDataDir: workDir })
   const handlers = new Map<string, Handler>()
   const showOpenDialog = vi.fn(async () => ({ canceled, filePaths }))
 
@@ -47,7 +50,7 @@ function setup(filePaths: string[] = [], canceled = false): SetupResult {
     } as unknown as IpcMain,
     {
       repository,
-      fileStore: new FileBookStore({ userDataDir: workDir }),
+      fileStore,
       dialog: { showOpenDialog } as unknown as Dialog,
       getWindow: () => null
     }
@@ -61,10 +64,13 @@ function setup(filePaths: string[] = [], canceled = false): SetupResult {
 
   return {
     repository,
+    fileStore,
     showOpenDialog,
     invoke: async () => await requireHandler(LIBRARY_CHANNELS.import)({}),
     invokeCover: async (bookId) =>
-      (await requireHandler(LIBRARY_CHANNELS.readCover)({}, bookId)) as BookCover | null
+      (await requireHandler(LIBRARY_CHANNELS.readCover)({}, bookId)) as BookCover | null,
+    invokeContent: async (bookId) =>
+      (await requireHandler(LIBRARY_CHANNELS.readContent)({}, bookId)) as Uint8Array | null
   }
 }
 
@@ -169,5 +175,44 @@ describe('library:read-cover', () => {
 
     await expect(invokeCover('')).rejects.toThrow('书籍 id 不合法')
     await expect(invokeCover(42 as unknown as string)).rejects.toThrow('书籍 id 不合法')
+  })
+})
+
+describe('library:read-content', () => {
+  it('导入后能读回正文原始字节', async () => {
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体' })
+    const { invoke, invokeContent, repository } = setup([source])
+    await invoke()
+
+    const [book] = await repository.list()
+    const bytes = await invokeContent(book!.id)
+
+    // EPUB 是 zip，头四个字节固定为 PK\x03\x04
+    expect(Array.from(bytes!.slice(0, 4))).toEqual([80, 75, 3, 4])
+    expect(bytes!.byteLength).toBe(book!.fileSize)
+  })
+
+  it('书不存在时返回 null', async () => {
+    const { invokeContent } = setup([])
+
+    await expect(invokeContent('不存在的书')).resolves.toBeNull()
+  })
+
+  it('存档还在但文件被手工删掉时返回 null 而不是抛错', async () => {
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体' })
+    const { invoke, invokeContent, repository } = setup([source])
+    await invoke()
+
+    const [book] = await repository.list()
+    await rm(book!.filePath, { force: true })
+
+    await expect(invokeContent(book!.id)).resolves.toBeNull()
+  })
+
+  it('书籍 id 不合法时抛错', async () => {
+    const { invokeContent } = setup([])
+
+    await expect(invokeContent('')).rejects.toThrow('书籍 id 不合法')
+    await expect(invokeContent(42 as unknown as string)).rejects.toThrow('书籍 id 不合法')
   })
 })

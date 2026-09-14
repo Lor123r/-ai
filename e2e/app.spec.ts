@@ -148,6 +148,51 @@ test('导入 EPUB 后书籍进入书架并落盘，重启后依然在书架上',
   }
 })
 
+test('点开书架上的书会进入阅读器，翻页后能返回书架', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      // 书名既是书架上的按钮，也是阅读器标题栏里的 h1
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader).toBeVisible()
+      await expect(reader.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      // 真实 epub.js 会在 viewport 里插一个 iframe 承载章节正文
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect(reader.locator('.reader__viewport iframe')).toHaveCount(1)
+
+      const next = reader.getByRole('button', { name: '下一页' })
+      await expect(reader.getByRole('button', { name: '上一页' })).toBeEnabled()
+      await next.click()
+      await expect(reader.locator('.reader__error')).toHaveCount(0)
+      await expect(reader.getByText('阅读中')).toBeVisible()
+
+      await reader.getByRole('button', { name: '返回书架' }).click()
+      await expect(reader).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
 test('重复导入同一本书会被跳过而不是复制第二份', async () => {
   const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
   const sourceDir = join(userDataDir, 'sources')

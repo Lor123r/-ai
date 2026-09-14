@@ -22,6 +22,9 @@ const api: AppBridge = {
   },
   cover: {
     read: (bookId) => ipcRenderer.invoke(LIBRARY_CHANNELS.readCover, bookId)
+  },
+  content: {
+    read: (bookId) => ipcRenderer.invoke(LIBRARY_CHANNELS.readContent, bookId)
   }
 }
 

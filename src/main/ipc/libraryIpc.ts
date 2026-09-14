@@ -44,6 +44,15 @@ export function registerLibraryIpc(ipcMain: IpcMain, deps: LibraryIpcDeps): void
     const bytes = await deps.fileStore.readCover(book.coverPath)
     return bytes === null ? null : { bytes, mediaType: mediaTypeForCover(book.coverPath) }
   })
+
+  ipcMain.handle(LIBRARY_CHANNELS.readContent, async (_event, bookId: unknown): Promise<Uint8Array | null> => {
+    if (typeof bookId !== 'string' || bookId.trim() === '') throw new Error('书籍 id 不合法')
+
+    const book = await deps.repository.get(bookId.trim())
+    if (!book) return null
+    if (!(await deps.fileStore.exists(book.filePath))) return null
+    return deps.fileStore.read(book.filePath)
+  })
 }
 
 async function pickBookFiles(deps: LibraryIpcDeps): Promise<string[] | null> {

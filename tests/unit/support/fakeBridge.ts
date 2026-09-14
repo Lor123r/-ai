@@ -1,5 +1,6 @@
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import type { BookCover, CoverReader } from '@core/ports/bookCover'
+import type { BookContentReader } from '@core/ports/bookContent'
 import type { BookImporter } from '@core/ports/bookImporter'
 import type { AppBridge, RuntimeVersions } from '@shared/ipc'
 
@@ -17,9 +18,14 @@ export function createFakeImporter(
 }
 
 /** 默认读取器一律返回 null（等同没有封面），测试需要时可覆盖。 */
-export function createFakeCoverReader(
-  books: Record<string, BookCover> = {}
-): CoverReader {
+export function createFakeCoverReader(books: Record<string, BookCover> = {}): CoverReader {
+  return {
+    read: async (bookId) => books[bookId] ?? null
+  }
+}
+
+/** 默认正文读取器一律返回 null（等同没有这本书），测试需要时可覆盖。 */
+export function createFakeContentReader(books: Record<string, Uint8Array> = {}): BookContentReader {
   return {
     read: async (bookId) => books[bookId] ?? null
   }
@@ -31,7 +37,8 @@ export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): 
     versions,
     books: new InMemoryBookRepository(),
     library: createFakeImporter(),
-    cover: createFakeCoverReader()
+    cover: createFakeCoverReader(),
+    content: createFakeContentReader()
   }
 }
 

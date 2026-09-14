@@ -15,9 +15,14 @@ function progressText(locator: ShelfEntry['locator']): string {
 interface BookCardProps {
   entry: ShelfEntry
   onRemove: (id: string) => void
+  onOpen: (entry: ShelfEntry) => void
 }
 
-function BookCard({ entry, onRemove }: BookCardProps): React.JSX.Element {
+export interface BookshelfProps {
+  onOpen?: (entry: ShelfEntry) => void
+}
+
+function BookCard({ entry, onRemove, onOpen }: BookCardProps): React.JSX.Element {
   const { book, locator } = entry
   const percent = Math.round((locator?.percent ?? 0) * 100)
 
@@ -25,7 +30,9 @@ function BookCard({ entry, onRemove }: BookCardProps): React.JSX.Element {
     <li className="book-card">
       <BookCover bookId={book.id} title={book.title} />
       <h3 className="book-card__title" title={book.title}>
-        {book.title}
+        <button type="button" className="book-card__open" onClick={() => onOpen(entry)}>
+          {book.title}
+        </button>
       </h3>
       <p className="book-card__author">{book.author ?? '未知作者'}</p>
       <div
@@ -53,7 +60,7 @@ function BookCard({ entry, onRemove }: BookCardProps): React.JSX.Element {
   )
 }
 
-export default function Bookshelf(): React.JSX.Element {
+export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps): React.JSX.Element {
   const { entries, status, error, reload, removeBook } = useBooks()
   const importer = useBookImporter()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -122,7 +129,12 @@ export default function Bookshelf(): React.JSX.Element {
         {status === 'ready' && entries.length > 0 ? (
           <ul className="shelf">
             {entries.map((entry) => (
-              <BookCard key={entry.book.id} entry={entry} onRemove={(id) => void handleRemove(id)} />
+              <BookCard
+                key={entry.book.id}
+                entry={entry}
+                onRemove={(id) => void handleRemove(id)}
+                onOpen={onOpen}
+              />
             ))}
           </ul>
         ) : null}

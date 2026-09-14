@@ -179,6 +179,74 @@ body {
   overflow: hidden;
 }
 
+.book-card__open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reader {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--paper);
+}
+
+.reader__header,
+.reader__controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.reader__header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 18px;
+}
+
+.reader__header button,
+.reader__controls button {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.reader__controls {
+  justify-content: center;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.reader__controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.reader__viewport {
+  flex: 1;
+  min-height: 0;
+  margin: 0 auto;
+  width: min(900px, 100%);
+  overflow: hidden;
+}
+
+.reader__error {
+  margin: 0;
+  padding: 12px 24px;
+  color: #a2402c;
+}
+
 .book-card__author {
   margin: 0;
   color: var(--ink-soft);
@@ -225,4 +293,3 @@ body {
   border-color: #e3bdb2;
   color: #a2402c;
 }
-
