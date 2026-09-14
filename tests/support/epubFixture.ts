@@ -4,6 +4,13 @@ import JSZip from 'jszip'
 
 export const FAKE_PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])
 
+export interface EpubNavItem {
+  label: string
+  /** 相对导航文档的 href，可带 #fragment。 */
+  href: string
+  subitems?: EpubNavItem[]
+}
+
 export interface EpubFixtureOptions {
   title?: string | null
   author?: string | null
@@ -19,6 +26,8 @@ export interface EpubFixtureOptions {
   opfPath?: string
   /** 不写 container.xml，验证「没有标准入口也能靠扫描 .opf 读出来」。 */
   includeContainer?: boolean
+  /** 提供后生成 EPUB 3 导航文档 nav.xhtml，并在 manifest 里标 properties="nav"。 */
+  navItems?: EpubNavItem[]
 }
 
 function joinPath(...parts: string[]): string {
@@ -37,6 +46,7 @@ export async function buildEpubBytes(options: EpubFixtureOptions = {}): Promise<
   const coverMediaType = options.coverMediaType ?? 'image/png'
   const coverStyle = options.coverStyle ?? 'meta'
   const chapterCount = options.spineItems ?? 2
+  const navItems = options.navItems ?? null
 
   const zip = new JSZip()
 
@@ -62,6 +72,12 @@ export async function buildEpubBytes(options: EpubFixtureOptions = {}): Promise<
     }
   }
 
+  if (navItems) {
+    // epub.js 只认 properties 严格等于 "nav" 的 manifest 项
+    manifest.push(`<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`)
+    zip.file(joinPath(opfDir, 'nav.xhtml'), navDocument(navItems))
+  }
+
   const metadata = [
     options.title === null ? '' : `<dc:title>${options.title ?? '测试书名'}</dc:title>`,
     options.author === null ? '' : `<dc:creator>${options.author ?? '测试作者'}</dc:creator>`,
@@ -74,7 +90,7 @@ export async function buildEpubBytes(options: EpubFixtureOptions = {}): Promise<
   zip.file(
     opfPath,
     `<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0" unique-identifier="bookid">
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" version="${navItems ? '3.0' : '2.0'}" unique-identifier="bookid">
   <metadata>${metadata}</metadata>
   <manifest>${manifest.join('')}</manifest>
   <spine>${spine.join('')}</spine>
@@ -121,4 +137,23 @@ function chapterDocument(index: number): string {
   return `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>第 ${index + 1} 章</title></head>
 <body><p>第 ${index + 1} 章正文</p></body></html>`
+}
+
+function navDocument(items: EpubNavItem[]): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>目录</title></head>
+<body>
+<nav epub:type="toc" id="toc"><h1>目录</h1>${navList(items)}</nav>
+</body></html>`
+}
+
+function navList(items: EpubNavItem[]): string {
+  const entries = items
+    .map((item) => {
+      const nested = item.subitems && item.subitems.length > 0 ? navList(item.subitems) : ''
+      return `<li><a href="${item.href}">${item.label}</a>${nested}</li>`
+    })
+    .join('')
+  return `<ol>${entries}</ol>`
 }
