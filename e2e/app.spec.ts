@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { _electron as electron } from 'playwright'
+import { buildEpubFile } from '../tests/support/epubFixture'
 
 const mainEntry = join(__dirname, '..', 'out', 'main', 'index.js')
 
@@ -17,6 +18,13 @@ function launchEnv(userDataDir: string): Record<string, string> {
 
 interface BridgeWindow {
   api?: { books: { save(book: unknown): Promise<void> } }
+}
+
+/** 原生文件选择框无法自动化，改成在主进程里替换掉 showOpenDialog 的返回值。 */
+async function stubFilePicker(app: Awaited<ReturnType<typeof electron.launch>>, filePaths: string[]): Promise<void> {
+  await app.evaluate(({ dialog }, paths) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: paths })
+  }, filePaths)
 }
 
 async function seedBook(page: Page, id: string, title: string): Promise<void> {
@@ -88,6 +96,76 @@ test('通过 IPC 保存的书籍会落盘，并在重启后重新出现在书架
       await expect(page.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toHaveCount(0)
     } finally {
       await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('导入 EPUB 后书籍进入书架并落盘，重启后依然在书架上', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+
+      await stubFilePicker(first, [epubPath])
+      await page.getByRole('button', { name: '导入书籍' }).click()
+
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await expect(page.getByText('刘慈欣')).toBeVisible()
+      await expect(page.getByRole('status')).toHaveText('已导入 1 本')
+      await expect(page.getByText('1 本', { exact: true })).toBeVisible()
+
+      expect(await readdir(join(userDataDir, 'books'))).toHaveLength(1)
+    } finally {
+      await first.close()
+    }
+
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      // 提示是本次会话的临时状态，重启后不该再出现
+      await expect(page.getByRole('status')).toHaveCount(0)
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('重复导入同一本书会被跳过而不是复制第二份', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体' })
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('status')).toHaveText('已导入 1 本')
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('status')).toHaveText('跳过 1 本重复书籍')
+
+      expect(await readdir(join(userDataDir, 'books'))).toHaveLength(1)
+      await expect(page.getByRole('heading', { name: '三体' })).toHaveCount(1)
+    } finally {
+      await app.close()
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })

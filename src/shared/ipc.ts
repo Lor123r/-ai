@@ -1,4 +1,5 @@
 import type { BookRepository } from '../core/ports/bookRepository'
+import type { BookImporter } from '../core/ports/bookImporter'
 
 /** IPC 频道名集中定义，避免主进程与 preload 各写一份字符串而写错。 */
 export const BOOK_CHANNELS = {
@@ -11,6 +12,10 @@ export const BOOK_CHANNELS = {
   markOpened: 'books:mark-opened'
 } as const
 
+export const LIBRARY_CHANNELS = {
+  import: 'library:import'
+} as const
+
 export interface RuntimeVersions {
   node: string
   chrome: string
@@ -21,4 +26,5 @@ export interface RuntimeVersions {
 export interface AppBridge {
   versions: RuntimeVersions
   books: BookRepository
+  library: BookImporter
 }

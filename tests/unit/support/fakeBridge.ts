@@ -1,4 +1,5 @@
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
+import type { BookImporter } from '@core/ports/bookImporter'
 import type { AppBridge, RuntimeVersions } from '@shared/ipc'
 
 export const DEFAULT_VERSIONS: RuntimeVersions = {
@@ -7,9 +8,16 @@ export const DEFAULT_VERSIONS: RuntimeVersions = {
   electron: '38.2.0'
 }
 
+/** 默认导入器什么都不做（等同用户取消），测试需要时可覆盖。 */
+export function createFakeImporter(
+  pickAndImport: BookImporter['pickAndImport'] = async () => null
+): BookImporter {
+  return { pickAndImport }
+}
+
 /** 造一个完整的 preload 桥，避免每个测试自己拼一份不完整的对象。 */
 export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): AppBridge {
-  return { versions, books: new InMemoryBookRepository() }
+  return { versions, books: new InMemoryBookRepository(), library: createFakeImporter() }
 }
 
 /** 把假桥挂到 window 上，返回清理函数。 */

@@ -28,7 +28,8 @@
     "src/core/**/*",
     "src/shared/**/*",
     "src/preload/*.d.ts",
-    "tests/unit/**/*"
+    "tests/unit/**/*",
+    "tests/support/**/*"
   ],
   "exclude": ["tests/unit/main/**/*"]
 }

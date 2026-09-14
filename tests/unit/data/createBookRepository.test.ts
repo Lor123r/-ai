@@ -26,7 +26,11 @@ describe('createBookRepository', () => {
 
   it('存在 preload 桥时使用主进程持久化实现', async () => {
     const bridge = fakeBridgeRepository()
-    window.api = { versions: { node: '24.0.0', chrome: '1', electron: '44' }, books: bridge }
+    window.api = {
+      versions: { node: '24.0.0', chrome: '1', electron: '44' },
+      books: bridge,
+      library: { pickAndImport: async () => null }
+    }
 
     const repository = createBookRepository()
     expect(repository).toBe(bridge)

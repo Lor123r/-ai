@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { formatPercentLabel, isBookFinished } from '@core/domain/progress'
+import { useBookImporter } from '@renderer/data/BookImporterProvider'
 import { useBooks, type ShelfEntry } from '@renderer/hooks/useBooks'
 import { formatRuntimeLabel, getRuntimeVersions } from '@renderer/platform/runtime'
+import { describeImportFailures, describeImportResult } from './importNotice'
 
 function progressText(locator: ShelfEntry['locator']): string {
   if (!locator) return '尚未开始'
@@ -50,8 +52,11 @@ function BookCard({ entry, onRemove }: BookCardProps): React.JSX.Element {
 }
 
 export default function Bookshelf(): React.JSX.Element {
-  const { entries, status, error, removeBook } = useBooks()
+  const { entries, status, error, reload, removeBook } = useBooks()
+  const importer = useBookImporter()
   const [actionError, setActionError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   const runtimeLabel = formatRuntimeLabel(getRuntimeVersions())
 
   async function handleRemove(id: string): Promise<void> {
@@ -63,18 +68,52 @@ export default function Bookshelf(): React.JSX.Element {
     }
   }
 
+  async function handleImport(): Promise<void> {
+    if (!importer) return
+
+    setImporting(true)
+    try {
+      const summary = await importer.pickAndImport()
+      // 用户点了取消什么也没发生，保持原有提示不变
+      if (summary) {
+        await reload()
+        setNotice(describeImportResult(summary))
+        setActionError(describeImportFailures(summary.failed))
+      }
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="app">
       <header className="app-header">
         <h1 className="app-header__title">书架</h1>
         <span className="app-header__meta">
           {status === 'ready' && entries.length > 0 ? <span className="app-header__count">{entries.length} 本</span> : null}
+          {importer ? (
+            <button
+              type="button"
+              className="app-header__action"
+              onClick={() => void handleImport()}
+              disabled={importing}
+            >
+              {importing ? '正在导入…' : '导入书籍'}
+            </button>
+          ) : null}
           <span className="app-header__runtime">{runtimeLabel}</span>
         </span>
       </header>
       <main className="app-body" data-status={status}>
         {status === 'loading' ? <p className="empty-hint">正在读取书架…</p> : null}
         {status === 'error' ? <p className="error-hint">读取书架失败：{error}</p> : null}
+        {status === 'ready' && notice ? (
+          <p className="status-banner" role="status">
+            {notice}
+          </p>
+        ) : null}
         {status === 'ready' && entries.length === 0 ? (
           <p className="empty-hint">书架还是空的，导入 EPUB 后就会出现在这里。</p>
         ) : null}

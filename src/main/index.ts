@@ -1,6 +1,8 @@
 import { join } from 'node:path'
-import { BrowserWindow, app, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { registerBooksIpc } from './ipc/booksIpc'
+import { registerLibraryIpc } from './ipc/libraryIpc'
+import { FileBookStore } from './import/fileBookStore'
 import { openLibrary, resolveLibraryFilePath } from './storage/library'
 
 const isDev = !app.isPackaged
@@ -50,12 +52,19 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(async () => {
-  const { repository, recoveredFiles } = await openLibrary(resolveLibraryFilePath(app.getPath('userData')))
+  const userDataDir = app.getPath('userData')
+  const { repository, recoveredFiles } = await openLibrary(resolveLibraryFilePath(userDataDir))
   if (recoveredFiles.length > 0) {
     console.warn('[library] 原书库文件无法读取，已备份为：', recoveredFiles.join(', '))
   }
 
   registerBooksIpc(ipcMain, repository)
+  registerLibraryIpc(ipcMain, {
+    repository,
+    fileStore: new FileBookStore({ userDataDir }),
+    dialog,
+    getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
+  })
   createWindow()
 
   app.on('activate', () => {
