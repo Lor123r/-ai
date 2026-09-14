@@ -19,6 +19,9 @@ const api: AppBridge = {
   },
   library: {
     pickAndImport: () => ipcRenderer.invoke(LIBRARY_CHANNELS.import)
+  },
+  cover: {
+    read: (bookId) => ipcRenderer.invoke(LIBRARY_CHANNELS.readCover, bookId)
   }
 }
 

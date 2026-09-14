@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Dialog, IpcMain } from 'electron'
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
+import type { BookCover } from '@core/ports/bookCover'
 import { UNREADABLE_EPUB_REASON, UNSUPPORTED_FORMAT_REASON } from '@core/services/importBooks'
 import { LIBRARY_CHANNELS } from '@shared/ipc'
 import { registerLibraryIpc } from '../../../src/main/ipc/libraryIpc'
@@ -27,6 +28,7 @@ afterEach(async () => {
 
 interface SetupResult {
   invoke: () => Promise<unknown>
+  invokeCover: (bookId: unknown) => Promise<BookCover | null>
   repository: InMemoryBookRepository
   showOpenDialog: ReturnType<typeof vi.fn>
 }
@@ -51,14 +53,18 @@ function setup(filePaths: string[] = [], canceled = false): SetupResult {
     }
   )
 
+  function requireHandler(channel: string): Handler {
+    const handler = handlers.get(channel)
+    if (!handler) throw new Error(`频道未注册：${channel}`)
+    return handler
+  }
+
   return {
     repository,
     showOpenDialog,
-    invoke: async () => {
-      const handler = handlers.get(LIBRARY_CHANNELS.import)
-      if (!handler) throw new Error('导入频道未注册')
-      return await handler({})
-    }
+    invoke: async () => await requireHandler(LIBRARY_CHANNELS.import)({}),
+    invokeCover: async (bookId) =>
+      (await requireHandler(LIBRARY_CHANNELS.readCover)({}, bookId)) as BookCover | null
   }
 }
 
@@ -127,5 +133,41 @@ describe('registerLibraryIpc', () => {
     const options = showOpenDialog.mock.calls[0]?.[0] as { properties: string[]; filters: { extensions: string[] }[] }
     expect(options.properties).toEqual(['openFile', 'multiSelections'])
     expect(options.filters[0]?.extensions).toEqual(['epub', 'txt'])
+  })
+})
+
+describe('library:read-cover', () => {
+  it('导入带封面的书后能读回封面字节与类型', async () => {
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体' })
+    const { invoke, invokeCover, repository } = setup([source])
+    await invoke()
+
+    const [book] = await repository.list()
+    const cover = await invokeCover(book!.id)
+
+    expect(cover?.mediaType).toBe('image/png')
+    expect(Array.from(cover!.bytes.slice(0, 4))).toEqual([137, 80, 78, 71])
+  })
+
+  it('书没有封面时返回 null', async () => {
+    const source = await buildEpubFile(join(sourceDir, '无封面.epub'), { coverStyle: 'none' })
+    const { invoke, invokeCover, repository } = setup([source])
+    await invoke()
+
+    const [book] = await repository.list()
+    await expect(invokeCover(book!.id)).resolves.toBeNull()
+  })
+
+  it('书不存在时返回 null', async () => {
+    const { invokeCover } = setup([])
+
+    await expect(invokeCover('不存在的书')).resolves.toBeNull()
+  })
+
+  it('书籍 id 不合法时抛错', async () => {
+    const { invokeCover } = setup([])
+
+    await expect(invokeCover('')).rejects.toThrow('书籍 id 不合法')
+    await expect(invokeCover(42 as unknown as string)).rejects.toThrow('书籍 id 不合法')
   })
 })

@@ -74,6 +74,11 @@ export class FakeFileStore implements FileStore {
     return path
   }
 
+  async readCover(coverPath: string): Promise<Uint8Array | null> {
+    const cover = this.covers.find((entry) => entry.path === coverPath)
+    return cover ? cover.bytes : null
+  }
+
   async remove(filePath: string): Promise<void> {
     this.removed.push(filePath)
     this.stored.delete(filePath)

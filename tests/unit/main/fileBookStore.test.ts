@@ -170,6 +170,31 @@ describe('FileBookStore.writeCover', () => {
   })
 })
 
+describe('FileBookStore.readCover', () => {
+  it('读回写入的封面字节', async () => {
+    const store = createStore()
+    const coverPath = await store.writeCover('abc123', new Uint8Array([1, 2, 3]), 'png')
+
+    await expect(store.readCover(coverPath)).resolves.toEqual(new Uint8Array([1, 2, 3]))
+  })
+
+  it('封面文件被删掉时返回 null，不抛错', async () => {
+    const store = createStore()
+    const coverPath = await store.writeCover('abc123', new Uint8Array([1]), 'png')
+    await rm(coverPath, { force: true })
+
+    await expect(store.readCover(coverPath)).resolves.toBeNull()
+  })
+
+  it('读书库目录之外的文件会被拒绝', async () => {
+    const store = createStore()
+    const outside = join(workDir, 'library.json')
+    await writeFile(outside, '{}')
+
+    await expect(store.readCover(outside)).rejects.toThrow('文件不在书库目录内')
+  })
+})
+
 describe('FileBookStore.remove / exists', () => {
   it('删除已导入的文件后 exists 变为 false', async () => {
     const store = createStore()

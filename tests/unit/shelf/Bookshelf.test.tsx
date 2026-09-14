@@ -4,7 +4,9 @@ import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { createBook } from '@core/domain/book'
 import { createLocator } from '@core/domain/progress'
 import type { BookRepository } from '@core/ports/bookRepository'
+import type { CoverReader } from '@core/ports/bookCover'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
+import { CoverReaderProvider } from '@renderer/data/CoverReaderProvider'
 import Bookshelf from '@renderer/shelf/Bookshelf'
 
 afterEach(() => {
@@ -26,10 +28,12 @@ function seed(id: string, overrides: { title?: string; author?: string | null; l
   }
 }
 
-function renderShelf(repository: BookRepository): void {
+function renderShelf(repository: BookRepository, reader: CoverReader | null = null): void {
   render(
     <BookRepositoryProvider repository={repository}>
-      <Bookshelf />
+      <CoverReaderProvider reader={reader}>
+        <Bookshelf />
+      </CoverReaderProvider>
     </BookRepositoryProvider>
   )
 }
@@ -140,5 +144,20 @@ describe('Bookshelf', () => {
     renderShelf(repo)
 
     expect(await screen.findByText('读取书架失败：数据库损坏')).toBeInTheDocument()
+  })
+
+  it('每张卡片都按自己的书籍 id 取封面', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: '有封面的书' }))
+    await repo.save(seed('b', { title: '没封面的书' }))
+    const read = vi.fn(async (bookId: string) =>
+      bookId === 'a' ? { bytes: new TextEncoder().encode('PNG'), mediaType: 'image/png' } : null
+    )
+
+    renderShelf(repo, { read })
+
+    expect(await screen.findByRole('img', { name: '《有封面的书》封面' })).toBeInTheDocument()
+    expect(screen.getByText('没')).toBeInTheDocument()
+    expect(read.mock.calls.map(([id]) => id).sort()).toEqual(['a', 'b'])
   })
 })

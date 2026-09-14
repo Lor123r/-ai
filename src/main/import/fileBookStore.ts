@@ -71,6 +71,17 @@ export class FileBookStore implements FileStore {
     return target
   }
 
+  async readCover(coverPath: string): Promise<Uint8Array | null> {
+    const target = this.requireInside(this.coversDir, coverPath)
+
+    try {
+      return new Uint8Array(await readFile(target))
+    } catch {
+      // 封面文件可能被用户手工删掉，读不到不该让书架报错
+      return null
+    }
+  }
+
   async remove(filePath: string): Promise<void> {
     const target = this.requireInside(this.booksDir, filePath)
     await rm(target, { force: true })

@@ -3,6 +3,7 @@ import { formatPercentLabel, isBookFinished } from '@core/domain/progress'
 import { useBookImporter } from '@renderer/data/BookImporterProvider'
 import { useBooks, type ShelfEntry } from '@renderer/hooks/useBooks'
 import { formatRuntimeLabel, getRuntimeVersions } from '@renderer/platform/runtime'
+import BookCover from './BookCover'
 import { describeImportFailures, describeImportResult } from './importNotice'
 
 function progressText(locator: ShelfEntry['locator']): string {
@@ -22,6 +23,7 @@ function BookCard({ entry, onRemove }: BookCardProps): React.JSX.Element {
 
   return (
     <li className="book-card">
+      <BookCover bookId={book.id} title={book.title} />
       <h3 className="book-card__title" title={book.title}>
         {book.title}
       </h3>

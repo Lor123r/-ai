@@ -1,5 +1,6 @@
 import type { BookRepository } from '../core/ports/bookRepository'
 import type { BookImporter } from '../core/ports/bookImporter'
+import type { CoverReader } from '../core/ports/bookCover'
 
 /** IPC 频道名集中定义，避免主进程与 preload 各写一份字符串而写错。 */
 export const BOOK_CHANNELS = {
@@ -13,7 +14,8 @@ export const BOOK_CHANNELS = {
 } as const
 
 export const LIBRARY_CHANNELS = {
-  import: 'library:import'
+  import: 'library:import',
+  readCover: 'library:read-cover'
 } as const
 
 export interface RuntimeVersions {
@@ -27,4 +29,5 @@ export interface AppBridge {
   versions: RuntimeVersions
   books: BookRepository
   library: BookImporter
+  cover: CoverReader
 }

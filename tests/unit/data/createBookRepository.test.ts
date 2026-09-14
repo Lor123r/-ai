@@ -1,6 +1,7 @@
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import type { BookRepository } from '@core/ports/bookRepository'
 import { createBookRepository } from '@renderer/data/createBookRepository'
+import { createFakeBridge } from '../support/fakeBridge'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 function fakeBridgeRepository(): BookRepository {
@@ -27,9 +28,8 @@ describe('createBookRepository', () => {
   it('存在 preload 桥时使用主进程持久化实现', async () => {
     const bridge = fakeBridgeRepository()
     window.api = {
-      versions: { node: '24.0.0', chrome: '1', electron: '44' },
-      books: bridge,
-      library: { pickAndImport: async () => null }
+      ...createFakeBridge(),
+      books: bridge
     }
 
     const repository = createBookRepository()

@@ -29,6 +29,8 @@ export interface FileStore {
   read(filePath: string): Promise<Uint8Array>
   /** 写入封面图，返回它在磁盘上的位置。 */
   writeCover(bookId: string, bytes: Uint8Array, extension: string): Promise<string>
+  /** 读取封面字节；文件不存在时返回 null 而不是抛错。 */
+  readCover(coverPath: string): Promise<Uint8Array | null>
   remove(filePath: string): Promise<void>
   exists(filePath: string): Promise<boolean>
 }

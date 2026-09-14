@@ -144,6 +144,29 @@ body {
   border-radius: 8px;
 }
 
+.book-card__cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background: #efe9dc;
+  border-radius: 4px;
+}
+
+.book-card__cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.book-card__cover-letter {
+  color: var(--ink-soft);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
 .book-card__title {
   margin: 0;
   font-size: 15px;

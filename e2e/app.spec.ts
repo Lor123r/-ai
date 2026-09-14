@@ -121,6 +121,11 @@ test('导入 EPUB 后书籍进入书架并落盘，重启后依然在书架上',
       await expect(page.getByText('刘慈欣')).toBeVisible()
       await expect(page.getByRole('status')).toHaveText('已导入 1 本')
       await expect(page.getByText('1 本', { exact: true })).toBeVisible()
+      // 封面由主进程读出后转成 data URL 交给渲染进程，绕开 file:// 的跨源限制
+      await expect(page.getByRole('img', { name: '《三体》封面' })).toHaveAttribute(
+        'src',
+        /^data:image\/png;base64,/
+      )
 
       expect(await readdir(join(userDataDir, 'books'))).toHaveLength(1)
     } finally {

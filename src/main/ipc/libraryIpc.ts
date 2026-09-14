@@ -1,4 +1,6 @@
 import type { BrowserWindow, Dialog, IpcMain, OpenDialogOptions } from 'electron'
+import { mediaTypeForCover } from '@core/domain/cover'
+import type { BookCover } from '@core/ports/bookCover'
 import type { BookImportSummary } from '@core/ports/bookImporter'
 import type { BookRepository } from '@core/ports/bookRepository'
 import type { FileStore } from '@core/ports/fileStore'
@@ -31,6 +33,16 @@ export function registerLibraryIpc(ipcMain: IpcMain, deps: LibraryIpcDeps): void
     })
 
     return { added: report.added.length, skipped: report.skipped.length, failed: report.failed }
+  })
+
+  ipcMain.handle(LIBRARY_CHANNELS.readCover, async (_event, bookId: unknown): Promise<BookCover | null> => {
+    if (typeof bookId !== 'string' || bookId.trim() === '') throw new Error('书籍 id 不合法')
+
+    const book = await deps.repository.get(bookId.trim())
+    if (!book?.coverPath) return null
+
+    const bytes = await deps.fileStore.readCover(book.coverPath)
+    return bytes === null ? null : { bytes, mediaType: mediaTypeForCover(book.coverPath) }
   })
 }
 
