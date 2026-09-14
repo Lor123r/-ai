@@ -5,8 +5,10 @@ import {
   formatPercentLabel,
   isBookFinished,
   isSameLocation,
+  locatorFromRelocation,
   normalizeChapterIndex,
-  normalizeCfi
+  normalizeCfi,
+  percentFromRelocation
 } from '@core/domain/progress'
 
 describe('clampPercent', () => {
@@ -83,6 +85,70 @@ describe('formatPercentLabel', () => {
     expect(formatPercentLabel(0.426)).toBe('43%')
     expect(formatPercentLabel(1)).toBe('100%')
     expect(formatPercentLabel(2)).toBe('100%')
+  })
+})
+
+describe('percentFromRelocation', () => {
+  it('把整本书均分成章节，再按章节内页码细化', () => {
+    // 10 章，第 1 章头一页 -> 0%，第 1 章末页 -> 10%，第 6 章头一页 -> 50%
+    expect(percentFromRelocation({ chapterIndex: 0, page: 1, totalPages: 10, spineCount: 10 })).toBe(0)
+    expect(percentFromRelocation({ chapterIndex: 0, page: 10, totalPages: 10, spineCount: 10 })).toBeCloseTo(0.1)
+    expect(percentFromRelocation({ chapterIndex: 5, page: 1, totalPages: 10, spineCount: 10 })).toBeCloseTo(0.5)
+  })
+
+  it('最后一页刚好凑满 100%', () => {
+    expect(percentFromRelocation({ chapterIndex: 9, page: 10, totalPages: 10, spineCount: 10 })).toBe(1)
+  })
+
+  it('章节只有一页时算作章节开头', () => {
+    expect(percentFromRelocation({ chapterIndex: 0, page: 1, totalPages: 1, spineCount: 4 })).toBe(0)
+    expect(percentFromRelocation({ chapterIndex: 2, page: 1, totalPages: 1, spineCount: 4 })).toBe(0.5)
+  })
+
+  it('页码越界或缺失时退回章节开头，页码超出末页时按末页算', () => {
+    expect(percentFromRelocation({ chapterIndex: 3, page: 99, totalPages: 10, spineCount: 10 })).toBeCloseTo(0.4)
+    expect(percentFromRelocation({ chapterIndex: 3, totalPages: 10, spineCount: 10 })).toBeCloseTo(0.3)
+    expect(percentFromRelocation({ chapterIndex: 3, page: 0, totalPages: 10, spineCount: 10 })).toBeCloseTo(0.3)
+    expect(percentFromRelocation({ chapterIndex: 3, page: 2, totalPages: 0, spineCount: 10 })).toBeCloseTo(0.3)
+  })
+
+  it('章节序号越界时夹到最后一章，不会算出超过 100%', () => {
+    expect(percentFromRelocation({ chapterIndex: 99, page: 10, totalPages: 10, spineCount: 10 })).toBe(1)
+  })
+
+  it('缺少章节信息时只能给 0', () => {
+    expect(percentFromRelocation({ chapterIndex: null, page: 1, totalPages: 10, spineCount: 10 })).toBe(0)
+    expect(percentFromRelocation({ chapterIndex: 3, spineCount: 0 })).toBe(0)
+    expect(percentFromRelocation({ chapterIndex: -1, spineCount: 10 })).toBe(0)
+  })
+
+  it('epub.js 报到最后页时直接算作读完', () => {
+    expect(percentFromRelocation({ chapterIndex: 9, page: 1, totalPages: 3, spineCount: 10, atEnd: true })).toBe(1)
+  })
+})
+
+describe('locatorFromRelocation', () => {
+  it('把一次位置变化整成可落盘的进度', () => {
+    expect(
+      locatorFromRelocation(
+        { cfi: ' epubcfi(/6/8!/4/2) ', chapterIndex: 3, page: 5, totalPages: 11, spineCount: 4 },
+        1234
+      )
+    ).toEqual({
+      cfi: 'epubcfi(/6/8!/4/2)',
+      percent: 0.85,
+      chapterIndex: 3,
+      updatedAt: 1234
+    })
+  })
+
+  it('CFI 缺失时留 null，进度仍然可算', () => {
+    expect(locatorFromRelocation({ chapterIndex: 1, page: 1, totalPages: 5, spineCount: 4 }, 7)).toEqual({
+      cfi: null,
+      percent: 0.25,
+      chapterIndex: 1,
+      updatedAt: 7
+    })
   })
 })
 

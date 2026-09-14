@@ -222,6 +222,19 @@ body {
   cursor: pointer;
 }
 
+.reader__status {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.reader__percent {
+  min-width: 44px;
+  text-align: right;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 .reader__controls {
   justify-content: center;
   border-top: 1px solid var(--line);

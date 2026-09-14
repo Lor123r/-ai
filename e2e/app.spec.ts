@@ -17,7 +17,13 @@ function launchEnv(userDataDir: string): Record<string, string> {
 }
 
 interface BridgeWindow {
-  api?: { books: { save(book: unknown): Promise<void> } }
+  api?: {
+    books: {
+      save(book: unknown): Promise<void>
+      list(): Promise<{ id: string }[]>
+      getLocator(bookId: string): Promise<{ percent: number } | null>
+    }
+  }
 }
 
 /** 原生文件选择框无法自动化，改成在主进程里替换掉 showOpenDialog 的返回值。 */
@@ -187,6 +193,70 @@ test('点开书架上的书会进入阅读器，翻页后能返回书架', async
       await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
     } finally {
       await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('阅读进度会落盘，重开应用后从上次的位置继续', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    let savedPercent = ''
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(first, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+
+      // 样例书每章只有一页，翻一页必定跨到后一章，进度只可能往前
+      await reader.getByRole('button', { name: '下一页' }).click()
+      const percent = reader.locator('.reader__percent')
+      await expect(percent).not.toHaveText('0%')
+      savedPercent = ((await percent.textContent()) ?? '').trim()
+      expect(savedPercent).not.toBe('')
+
+      await reader.getByRole('button', { name: '返回书架' }).click()
+      await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
+
+      // 等落盘真的完成再关应用，否则测到的是内存里的进度
+      await expect
+        .poll(async () =>
+          page.evaluate(async () => {
+            const api = (globalThis as unknown as BridgeWindow).api!
+            const [book] = await api.books.list()
+            const locator = book ? await api.books.getLocator(book.id) : null
+            return locator?.percent ?? 0
+          })
+        )
+        .toBeGreaterThan(0)
+    } finally {
+      await first.close()
+    }
+
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.locator('.reader__percent')).toHaveText(savedPercent)
+      await expect(reader.getByText('阅读中')).toBeVisible()
+    } finally {
+      await second.close()
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })

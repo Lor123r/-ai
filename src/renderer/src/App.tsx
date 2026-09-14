@@ -1,10 +1,11 @@
+import { useState } from 'react'
+import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 import { BookImporterProvider } from '@renderer/data/BookImporterProvider'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
 import { CoverReaderProvider } from '@renderer/data/CoverReaderProvider'
 import Bookshelf from '@renderer/shelf/Bookshelf'
 import ReaderView from '@renderer/reader/ReaderView'
 import type { ShelfEntry } from '@renderer/hooks/useBooks'
-import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 
 export default function App(): React.JSX.Element {
   const [activeEntry, setActiveEntry] = useState<ShelfEntry | null>(null)
@@ -29,4 +30,3 @@ export default function App(): React.JSX.Element {
     </BookRepositoryProvider>
   )
 }
-import { useState } from 'react'
