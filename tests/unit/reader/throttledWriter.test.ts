@@ -29,7 +29,7 @@ describe('createThrottledWriter', () => {
   })
 
   it('用 equals 判断重复，等价的连续输入只写一次', async () => {
-    const save = vi.fn(async () => undefined)
+    const save = vi.fn(async (_value: string) => undefined)
     // 大小写不敏感：'A' 与 'a' 视为同一个值
     const writer = createThrottledWriter({
       save,
@@ -78,7 +78,7 @@ describe('createThrottledWriter', () => {
   })
 
   it('间隔足够久时连续输入各写一次，且顺序不乱', async () => {
-    const save = vi.fn(async () => undefined)
+    const save = vi.fn(async (_value: number) => undefined)
     const writer = createThrottledWriter({ save, equals: numbersEqual, minIntervalMs: 100, now: tickingClock() })
 
     writer.push(1)

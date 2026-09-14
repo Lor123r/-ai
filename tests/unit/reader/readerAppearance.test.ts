@@ -11,7 +11,7 @@ function settings(patch: Partial<ReaderSettings> = {}): ReaderSettings {
   return { ...DEFAULT_READER_SETTINGS, ...patch }
 }
 
-function fakeStyler(): { override: ReturnType<typeof vi.fn>; calls: Record<string, [string, boolean | undefined]> } {
+function fakeStyler() {
   const calls: Record<string, [string, boolean | undefined]> = {}
   const override = vi.fn((name: string, value: string, priority?: boolean) => {
     calls[name] = [value, priority]
