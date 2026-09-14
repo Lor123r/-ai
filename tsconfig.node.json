@@ -19,6 +19,7 @@
   "include": [
     "src/main/**/*",
     "src/preload/**/*",
+    "src/core/**/*",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
