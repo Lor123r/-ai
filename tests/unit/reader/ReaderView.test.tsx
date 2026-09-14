@@ -1,11 +1,21 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createLocator } from '@core/domain/progress'
+import { DEFAULT_READER_SETTINGS } from '@core/domain/settings'
 import type { BookRepository } from '@core/ports/bookRepository'
+import type { SettingsRepository } from '@core/ports/settingsRepository'
 import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
+import { SettingsRepositoryProvider } from '@renderer/data/SettingsRepositoryProvider'
+import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepository'
 import ReaderView from '@renderer/reader/ReaderView'
-import type { EpubBook, EpubRelocation, EpubRendition } from '@renderer/reader/createEpubBook'
+import type {
+  EpubBook,
+  EpubNavItem,
+  EpubRelocation,
+  EpubRendition
+} from '@renderer/reader/createEpubBook'
+import { READER_THEME_COLORS } from '@renderer/reader/readerAppearance'
 import { seedRepository } from '../support/fakeRepository'
 
 afterEach(() => {
@@ -18,22 +28,35 @@ interface FakeEpub {
   display: ReturnType<typeof vi.fn>
   next: ReturnType<typeof vi.fn>
   prev: ReturnType<typeof vi.fn>
+  resize: ReturnType<typeof vi.fn>
+  override: ReturnType<typeof vi.fn>
   destroyRendition: ReturnType<typeof vi.fn>
   destroyBook: ReturnType<typeof vi.fn>
   /** 模拟 epub.js 翻页后抛出 relocated 事件。 */
   relocate: (location: EpubRelocation) => void
 }
 
+interface FakeEpubOptions {
+  ready?: Promise<unknown>
+  displayError?: Error
+  spineCount?: number
+  toc?: EpubNavItem[]
+  /** spine 里各章的路径，用来验证目录链接会被对齐到 OPF 相对路径。 */
+  spineUrls?: string[]
+  /** 故意不给主题能力，模拟不支持 override 的渲染器。 */
+  withoutThemes?: boolean
+}
+
 /** 假 epub.js：只保留 ReaderView 真正用到的那几个能力。 */
-function fakeEpub(
-  options: { ready?: Promise<unknown>; displayError?: Error; spineCount?: number } = {}
-): FakeEpub {
+function fakeEpub(options: FakeEpubOptions = {}): FakeEpub {
   const display = vi.fn(async () => {
     if (options.displayError) throw options.displayError
     return undefined
   })
   const next = vi.fn(async () => undefined)
   const prev = vi.fn(async () => undefined)
+  const resize = vi.fn()
+  const override = vi.fn()
   const destroyRendition = vi.fn()
   const destroyBook = vi.fn()
   const relocationHandlers: ((location: EpubRelocation) => void)[] = []
@@ -42,14 +65,23 @@ function fakeEpub(
     display,
     next,
     prev,
+    resize,
     on: (_event, handler) => {
       relocationHandlers.push(handler)
     },
     destroy: destroyRendition
   }
+  if (!options.withoutThemes) rendition.themes = { override }
+
   const book: EpubBook = {
     ready: options.ready ?? Promise.resolve(),
-    spine: { length: options.spineCount ?? 10 },
+    spine: {
+      length: options.spineCount ?? 10,
+      each: (callback) => {
+        for (const href of options.spineUrls ?? []) callback({ href })
+      }
+    },
+    navigation: { toc: options.toc ?? [] },
     renderTo: vi.fn(() => rendition),
     destroy: destroyBook
   }
@@ -60,6 +92,8 @@ function fakeEpub(
     display,
     next,
     prev,
+    resize,
+    override,
     destroyRendition,
     destroyBook,
     relocate: (location) => {
@@ -74,6 +108,7 @@ interface RenderOptions {
   title?: string
   onClose?: () => void
   repository?: BookRepository
+  settingsRepository?: SettingsRepository
   reader?: { read: (bookId: string) => Promise<Uint8Array | null> } | null
   now?: () => number
 }
@@ -82,6 +117,7 @@ interface RenderResult {
   epub: FakeEpub
   createBook: ReturnType<typeof vi.fn>
   onClose: ReturnType<typeof vi.fn>
+  settings: SettingsRepository
 }
 
 async function renderReader(options: RenderOptions = {}): Promise<RenderResult> {
@@ -89,6 +125,7 @@ async function renderReader(options: RenderOptions = {}): Promise<RenderResult> 
   const createBook = vi.fn(() => epub.book)
   const onClose = vi.fn(options.onClose)
   const repository = options.repository ?? (await seedRepository()).repository
+  const settings = options.settingsRepository ?? new InMemorySettingsRepository()
   const reader =
     options.reader === undefined
       ? { read: async () => (options.bytes === undefined ? new Uint8Array([1, 2, 3]) : options.bytes) }
@@ -97,18 +134,20 @@ async function renderReader(options: RenderOptions = {}): Promise<RenderResult> 
   render(
     <BookRepositoryProvider repository={repository}>
       <BookContentReaderProvider reader={reader}>
-        <ReaderView
-          bookId="book-1"
-          title={options.title ?? '三体'}
-          onClose={onClose}
-          createBook={createBook}
-          now={options.now}
-        />
+        <SettingsRepositoryProvider repository={settings}>
+          <ReaderView
+            bookId="book-1"
+            title={options.title ?? '三体'}
+            onClose={onClose}
+            createBook={createBook}
+            now={options.now}
+          />
+        </SettingsRepositoryProvider>
       </BookContentReaderProvider>
     </BookRepositoryProvider>
   )
 
-  return { epub, createBook, onClose }
+  return { epub, createBook, onClose, settings }
 }
 
 describe('ReaderView', () => {
@@ -347,5 +386,232 @@ describe('ReaderView 阅读进度', () => {
     })
     expect(screen.getByText('阅读中')).toBeInTheDocument()
     expect(screen.queryByText(/磁盘满了/)).not.toBeInTheDocument()
+  })
+})
+
+describe('ReaderView 目录', () => {
+  const toc: EpubNavItem[] = [
+    { id: 'c1', href: 'Text/ch1.xhtml', label: '第一章 科学边界' },
+    {
+      id: 'c2',
+      href: 'Text/ch2.xhtml',
+      label: '第二章 台球',
+      subitems: [{ id: 'c2-1', href: 'Text/ch2.xhtml#part2', label: '第二章 附录' }]
+    }
+  ]
+
+  it('就绪前目录按钮不可用，就绪后可以打开抽屉', async () => {
+    const { epub } = await renderReader({ epub: fakeEpub({ toc }) })
+
+    const toggle = screen.getByRole('button', { name: '目录' })
+    expect(toggle).toBeDisabled()
+
+    await waitFor(() => {
+      expect(toggle).toBeEnabled()
+    })
+    expect(screen.queryByRole('complementary', { name: '目录' })).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    const drawer = await screen.findByRole('complementary', { name: '目录' })
+    expect(drawer).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '第一章 科学边界' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '第二章 附录' })).toBeInTheDocument()
+    expect(epub.book.renderTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('点目录项跳到对应章节并收起抽屉', async () => {
+    const { epub } = await renderReader({ epub: fakeEpub({ toc }) })
+    const toggle = screen.getByRole('button', { name: '目录' })
+    await waitFor(() => {
+      expect(toggle).toBeEnabled()
+    })
+    fireEvent.click(toggle)
+
+    fireEvent.click(await screen.findByRole('button', { name: '第二章 台球' }))
+
+    await waitFor(() => {
+      expect(epub.display).toHaveBeenLastCalledWith('Text/ch2.xhtml')
+    })
+    expect(screen.queryByRole('complementary', { name: '目录' })).not.toBeInTheDocument()
+  })
+
+  it('目录里的相对链接会被对齐到 spine 的路径', async () => {
+    const epub = fakeEpub({
+      toc: [{ id: 'c1', href: '../Text/ch1.xhtml#top', label: '第一章' }],
+      spineUrls: ['Text/ch1.xhtml', 'Text/ch2.xhtml']
+    })
+    await renderReader({ epub })
+    const toggle = screen.getByRole('button', { name: '目录' })
+    await waitFor(() => {
+      expect(toggle).toBeEnabled()
+    })
+    fireEvent.click(toggle)
+    fireEvent.click(await screen.findByRole('button', { name: '第一章' }))
+
+    await waitFor(() => {
+      expect(epub.display).toHaveBeenLastCalledWith('Text/ch1.xhtml#top')
+    })
+  })
+
+  it('没有目录时给出提示而不是空白抽屉', async () => {
+    await renderReader({ epub: fakeEpub({ toc: [] }) })
+    const toggle = screen.getByRole('button', { name: '目录' })
+    await waitFor(() => {
+      expect(toggle).toBeEnabled()
+    })
+
+    fireEvent.click(toggle)
+
+    expect(await screen.findByText('这本书没有提供目录')).toBeInTheDocument()
+  })
+
+  it('跳转失败时提示错误，不影响继续阅读', async () => {
+    const epub = fakeEpub({ toc })
+    await renderReader({ epub })
+    const toggle = screen.getByRole('button', { name: '目录' })
+    await waitFor(() => {
+      expect(toggle).toBeEnabled()
+    })
+    fireEvent.click(toggle)
+
+    epub.display.mockRejectedValueOnce(new Error('No Section Found'))
+    fireEvent.click(await screen.findByRole('button', { name: '第一章 科学边界' }))
+
+    expect(await screen.findByText('无法打开本书：No Section Found')).toBeInTheDocument()
+    expect(screen.getByText('阅读中')).toBeInTheDocument()
+  })
+})
+
+describe('ReaderView 阅读设置', () => {
+  /** 时钟停在 0：让连续改动落进同一个节流窗口，便于验证合并。 */
+  const FROZEN_CLOCK = (): number => 0
+
+  async function renderReady(options: RenderOptions = {}): Promise<RenderResult> {
+    const result = await renderReader(options)
+    await waitFor(() => {
+      expect(screen.getByText('阅读中')).toBeInTheDocument()
+    })
+    return result
+  }
+
+  function openSettings(): HTMLElement {
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    return screen.getByRole('complementary', { name: '阅读设置' })
+  }
+
+  it('启动时把保存过的设置应用到正文样式', async () => {
+    const settings = new InMemorySettingsRepository({ ...DEFAULT_READER_SETTINGS, fontSize: 24, theme: 'night' })
+    const { epub } = await renderReady({ epub: fakeEpub(), settingsRepository: settings })
+
+    expect(epub.override).toHaveBeenCalledWith('font-size', '24px', true)
+    expect(epub.override).toHaveBeenCalledWith('background-color', READER_THEME_COLORS.night.paper, true)
+  })
+
+  it('改字号会立刻重设正文样式并落盘', async () => {
+    const settings = new InMemorySettingsRepository()
+    const save = vi.spyOn(settings, 'save')
+    const { epub } = await renderReady({ settingsRepository: settings })
+
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: '增大字号' }))
+
+    expect(epub.override).toHaveBeenCalledWith('font-size', '19px', true)
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 19 }))
+    })
+    await expect(settings.load()).resolves.toMatchObject({ fontSize: 19 })
+  })
+
+  it('连点字号只落盘最终值', async () => {
+    const settings = new InMemorySettingsRepository()
+    const save = vi.spyOn(settings, 'save')
+    await renderReady({ settingsRepository: settings, now: FROZEN_CLOCK })
+
+    openSettings()
+    const bigger = screen.getByRole('button', { name: '增大字号' })
+    fireEvent.click(bigger)
+    fireEvent.click(bigger)
+    fireEvent.click(bigger)
+
+    expect(screen.getByText('21 px')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1)
+    })
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 21 }))
+    await expect(settings.load()).resolves.toMatchObject({ fontSize: 21 })
+  })
+
+  it('字号到上限后按钮禁用', async () => {
+    const settings = new InMemorySettingsRepository({ ...DEFAULT_READER_SETTINGS, fontSize: 36 })
+    await renderReady({ settingsRepository: settings })
+
+    openSettings()
+
+    expect(screen.getByRole('button', { name: '增大字号' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '减小字号' })).toBeEnabled()
+  })
+
+  it('切主题会换掉外壳主题色，并把正文字色交给 epub.js', async () => {
+    const settings = new InMemorySettingsRepository()
+    const save = vi.spyOn(settings, 'save')
+    const { epub } = await renderReady({ settingsRepository: settings })
+
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: '夜间' }))
+
+    expect(screen.getByLabelText('正在阅读《三体》')).toHaveAttribute('data-theme', 'night')
+    expect(epub.override).toHaveBeenCalledWith('color', READER_THEME_COLORS.night.ink, true)
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ theme: 'night' }))
+    })
+  })
+
+  it('改页边距走容器内边距并让 epub.js 重新排版', async () => {
+    const settings = new InMemorySettingsRepository()
+    const { epub } = await renderReady({ settingsRepository: settings })
+    const viewport = document.querySelector('.reader__viewport') as HTMLElement
+    expect(viewport.style.padding).toBe('32px')
+
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: '减小页边距' }))
+
+    expect(viewport.style.padding).toBe('28px')
+    expect(epub.resize).toHaveBeenCalled()
+  })
+
+  it('改字体时带上 !important，好盖住书内自带的字体', async () => {
+    const { epub } = await renderReady()
+    openSettings()
+
+    fireEvent.click(screen.getByRole('button', { name: '黑体' }))
+
+    expect(epub.override).toHaveBeenCalledWith('font-family', expect.stringContaining('Microsoft YaHei'), true)
+    expect(screen.getByRole('button', { name: '黑体' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '宋体' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('渲染器不支持主题时设置面板仍可改，不会崩溃', async () => {
+    const settings = new InMemorySettingsRepository()
+    await renderReady({ epub: fakeEpub({ withoutThemes: true }), settingsRepository: settings })
+
+    openSettings()
+    fireEvent.click(screen.getByRole('button', { name: '增大字号' }))
+
+    expect(screen.getByText('19 px')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('阅读中')).toBeInTheDocument()
+    })
+  })
+
+  it('读设置失败时回落到默认值继续阅读', async () => {
+    const failing: SettingsRepository = {
+      load: () => Promise.reject(new Error('配置损坏')),
+      save: () => Promise.resolve()
+    }
+    const { epub } = await renderReady({ epub: fakeEpub(), settingsRepository: failing })
+
+    expect(epub.override).toHaveBeenCalledWith('font-size', `${DEFAULT_READER_SETTINGS.fontSize}px`, true)
+    expect(screen.getByText('阅读中')).toBeInTheDocument()
   })
 })

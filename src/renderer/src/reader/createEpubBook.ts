@@ -25,17 +25,44 @@ export interface EpubRenderOptions {
   flow?: string
 }
 
+export interface EpubNavItem {
+  id?: string
+  href?: string
+  label?: string
+  subitems?: EpubNavItem[]
+}
+
+export interface EpubNavigation {
+  /** epub.js 解析完导航后同步可读，book.ready 之后一定有值；无导航时是空数组。 */
+  toc?: EpubNavItem[]
+}
+
+export interface EpubThemeStyler {
+  override(name: string, value: string, priority?: boolean): void
+}
+
 export interface EpubRendition {
   display(target?: string): Promise<unknown>
   next(): Promise<unknown>
   prev(): Promise<unknown>
   on(event: 'relocated', handler: (location: EpubRelocation) => void): void
+  /** epub.js 自己监听 window resize，但容器尺寸变化要显式通知，否则排版会停在旧宽度。 */
+  resize(width?: number, height?: number): void
+  themes?: EpubThemeStyler
   destroy(): void
+}
+
+export interface EpubSpineSection {
+  href?: string
 }
 
 export interface EpubBook {
   ready: Promise<unknown>
-  spine?: { length?: number }
+  spine?: {
+    length?: number
+    each?(callback: (section: EpubSpineSection) => void): void
+  }
+  navigation?: EpubNavigation
   renderTo(element: HTMLElement, options?: EpubRenderOptions): EpubRendition
   destroy(): void
 }
@@ -44,6 +71,15 @@ export interface EpubBook {
 export function spineLength(book: EpubBook): number {
   const length = book.spine?.length
   return typeof length === 'number' && Number.isInteger(length) && length > 0 ? length : 1
+}
+
+/** spine 里各章相对 OPF 的路径，用于把目录里的相对链接对上号。 */
+export function spineHrefs(book: EpubBook): string[] {
+  const hrefs: string[] = []
+  book.spine?.each?.((section) => {
+    if (typeof section.href === 'string' && section.href.trim() !== '') hrefs.push(section.href.trim())
+  })
+  return hrefs
 }
 
 export function createEpubBook(bytes: Uint8Array): EpubBook {
