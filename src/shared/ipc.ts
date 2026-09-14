@@ -1,0 +1,24 @@
+import type { BookRepository } from '../core/ports/bookRepository'
+
+/** IPC 频道名集中定义，避免主进程与 preload 各写一份字符串而写错。 */
+export const BOOK_CHANNELS = {
+  list: 'books:list',
+  get: 'books:get',
+  save: 'books:save',
+  remove: 'books:remove',
+  getLocator: 'books:get-locator',
+  saveLocator: 'books:save-locator',
+  markOpened: 'books:mark-opened'
+} as const
+
+export interface RuntimeVersions {
+  node: string
+  chrome: string
+  electron: string
+}
+
+/** preload 通过 contextBridge 暴露给渲染进程的完整接口。 */
+export interface AppBridge {
+  versions: RuntimeVersions
+  books: BookRepository
+}

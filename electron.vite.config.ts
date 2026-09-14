@@ -6,12 +6,19 @@ export default defineConfig({
   main: {
     resolve: {
       alias: {
-        '@core': resolve('src/core')
+        '@core': resolve('src/core'),
+        '@shared': resolve('src/shared')
       }
     },
     plugins: [externalizeDepsPlugin()]
   },
   preload: {
+    resolve: {
+      alias: {
+        '@core': resolve('src/core'),
+        '@shared': resolve('src/shared')
+      }
+    },
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {
@@ -19,7 +26,8 @@ export default defineConfig({
       alias: {
         '@renderer': resolve('src/renderer/src'),
         '@preload': resolve('src/preload'),
-        '@core': resolve('src/core')
+        '@core': resolve('src/core'),
+        '@shared': resolve('src/shared')
       }
     },
     plugins: [react()]

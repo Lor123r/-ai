@@ -1,3 +1,5 @@
+import { isFiniteNumber, isRecord } from './guards'
+
 export interface ReadingLocator {
   /** EPUB 的 CFI 定位串；TXT 或未知位置时为 null。 */
   cfi: string | null
@@ -60,4 +62,18 @@ export function formatPercentLabel(percent: number): string {
 
 export function isBookFinished(percent: number, threshold: number = FINISHED_PERCENT_THRESHOLD): boolean {
   return clampPercent(percent) >= threshold
+}
+
+/** 把未知来源的进度数据还原为 ReadingLocator；非对象一律丢弃。 */
+export function reviveLocator(raw: unknown, now: number = Date.now()): ReadingLocator | null {
+  if (!isRecord(raw)) return null
+
+  const updatedAt = isFiniteNumber(raw.updatedAt) && raw.updatedAt >= 0 ? Math.round(raw.updatedAt) : now
+
+  return {
+    cfi: normalizeCfi(raw.cfi),
+    percent: clampPercent(raw.percent),
+    chapterIndex: normalizeChapterIndex(raw.chapterIndex),
+    updatedAt
+  }
 }

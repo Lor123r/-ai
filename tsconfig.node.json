@@ -14,15 +14,21 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@core/*": ["./src/core/*"],
+      "@shared/*": ["./src/shared/*"]
+    }
   },
   "include": [
     "src/main/**/*",
     "src/preload/**/*",
     "src/core/**/*",
+    "src/shared/**/*",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
-    "e2e/**/*"
+    "e2e/**/*",
+    "tests/unit/main/**/*"
   ]
 }

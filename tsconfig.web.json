@@ -19,8 +19,16 @@
     "paths": {
       "@renderer/*": ["./src/renderer/src/*"],
       "@preload/*": ["./src/preload/*"],
-      "@core/*": ["./src/core/*"]
+      "@core/*": ["./src/core/*"],
+      "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": ["src/renderer/src/**/*", "src/core/**/*", "src/preload/*.d.ts", "tests/unit/**/*"]
+  "include": [
+    "src/renderer/src/**/*",
+    "src/core/**/*",
+    "src/shared/**/*",
+    "src/preload/*.d.ts",
+    "tests/unit/**/*"
+  ],
+  "exclude": ["tests/unit/main/**/*"]
 }

@@ -1,3 +1,5 @@
+import { isFiniteNumber, isNonEmptyString, isRecord } from './guards'
+
 export type BookFormat = 'epub' | 'txt'
 
 export interface Book {
@@ -39,7 +41,7 @@ export function detectBookFormat(filePath: string): BookFormat | null {
   return null
 }
 
-export function normalizeBookTitle(raw: string | null | undefined): string {
+export function normalizeBookTitle(raw: unknown): string {
   if (typeof raw !== 'string') return UNTITLED_BOOK_TITLE
 
   const cleaned = raw.replace(CONTROL_CHARACTERS, ' ').replace(/\s+/g, ' ').trim()
@@ -48,14 +50,14 @@ export function normalizeBookTitle(raw: string | null | undefined): string {
   return cleaned.slice(0, MAX_TITLE_LENGTH)
 }
 
-export function normalizeBookAuthor(raw: string | null | undefined): string | null {
+export function normalizeBookAuthor(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
 
   const cleaned = raw.replace(CONTROL_CHARACTERS, ' ').replace(/\s+/g, ' ').trim()
   return cleaned.length === 0 ? null : cleaned
 }
 
-function normalizeFileSize(raw: number): number {
+function normalizeFileSize(raw: unknown): number {
   if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return 0
   return Math.round(raw)
 }
@@ -92,4 +94,34 @@ export function compareBooksForShelf(a: Book, b: Book): number {
   if (addedDiff !== 0) return addedDiff
 
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/**
+ * 把未知来源的数据（磁盘存档、IPC 参数）还原为 Book。
+ * 关键字段缺失时返回 null 让调用方丢弃该条，而不是让整个书库读不出来。
+ */
+export function reviveBook(raw: unknown, now: number = Date.now()): Book | null {
+  if (!isRecord(raw)) return null
+
+  const id = isNonEmptyString(raw.id) ? raw.id.trim() : null
+  const filePath = isNonEmptyString(raw.filePath) ? raw.filePath.trim() : null
+  const format = raw.format === 'epub' || raw.format === 'txt' ? raw.format : null
+  if (!id || !filePath || !format) return null
+
+  const addedAt =
+    isFiniteNumber(raw.addedAt) && raw.addedAt >= 0 ? Math.round(raw.addedAt) : now
+  const lastOpenedAt =
+    isFiniteNumber(raw.lastOpenedAt) && raw.lastOpenedAt >= 0 ? Math.round(raw.lastOpenedAt) : null
+
+  return {
+    id,
+    title: normalizeBookTitle(raw.title),
+    author: normalizeBookAuthor(raw.author),
+    format,
+    filePath,
+    fileSize: normalizeFileSize(raw.fileSize),
+    coverPath: isNonEmptyString(raw.coverPath) ? raw.coverPath : null,
+    addedAt,
+    lastOpenedAt
+  }
 }

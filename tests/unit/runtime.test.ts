@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { formatRuntimeLabel, getRuntimeVersions } from '@renderer/platform/runtime'
+import { installFakeBridge } from './support/fakeBridge'
 
 describe('getRuntimeVersions', () => {
   it('无 window.api 时返回 undefined', () => {
+    expect(window.api).toBeUndefined()
     expect(getRuntimeVersions()).toBeUndefined()
   })
 
   it('有 window.api 时返回版本信息', () => {
-    window.api = { versions: { node: '24.21.0', chrome: '140.0.0', electron: '38.2.0' } }
+    const cleanup = installFakeBridge({ node: '24.21.0', chrome: '140.0.0', electron: '38.2.0' })
 
-    expect(getRuntimeVersions()).toEqual({ node: '24.21.0', chrome: '140.0.0', electron: '38.2.0' })
-
-    delete window.api
+    try {
+      expect(getRuntimeVersions()).toEqual({ node: '24.21.0', chrome: '140.0.0', electron: '38.2.0' })
+    } finally {
+      cleanup()
+    }
   })
 })
 

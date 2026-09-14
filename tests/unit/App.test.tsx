@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import App from '@renderer/App'
+import { installFakeBridge } from './support/fakeBridge'
 
 afterEach(() => {
   cleanup()
@@ -23,12 +24,14 @@ describe('App', () => {
   })
 
   it('有 preload 注入时展示 Electron 运行时版本', async () => {
-    window.api = {
-      versions: { node: '24.21.0', chrome: '140.0.7339.0', electron: '38.2.0' }
+    const cleanup = installFakeBridge({ node: '24.21.0', chrome: '140.0.7339.0', electron: '38.2.0' })
+
+    try {
+      render(<App />)
+
+      expect(await screen.findByText('Electron 38.2.0 · Chromium 140.0.7339.0')).toBeInTheDocument()
+    } finally {
+      cleanup()
     }
-
-    render(<App />)
-
-    expect(await screen.findByText('Electron 38.2.0 · Chromium 140.0.7339.0')).toBeInTheDocument()
   })
 })

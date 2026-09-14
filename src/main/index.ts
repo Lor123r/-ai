@@ -1,7 +1,16 @@
 import { join } from 'node:path'
-import { BrowserWindow, app, shell } from 'electron'
+import { BrowserWindow, app, ipcMain, shell } from 'electron'
+import { registerBooksIpc } from './ipc/booksIpc'
+import { openLibrary, resolveLibraryFilePath } from './storage/library'
 
 const isDev = !app.isPackaged
+
+/**
+ * 允许用环境变量指定数据目录，便于端到端测试与便携模式
+ * 不污染用户真实的书库。必须在 app.whenReady 之前设置。
+ */
+const userDataOverride = process.env['EBOOK_READER_USER_DATA']
+if (userDataOverride) app.setPath('userData', userDataOverride)
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -40,7 +49,13 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
+  const { repository, recoveredFiles } = await openLibrary(resolveLibraryFilePath(app.getPath('userData')))
+  if (recoveredFiles.length > 0) {
+    console.warn('[library] 原书库文件无法读取，已备份为：', recoveredFiles.join(', '))
+  }
+
+  registerBooksIpc(ipcMain, repository)
   createWindow()
 
   app.on('activate', () => {
