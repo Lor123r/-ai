@@ -3,7 +3,8 @@ import {
   DEFAULT_READER_SETTINGS,
   normalizeReaderSettings,
   readerSettingsEqual,
-  READER_LIMITS
+  READER_LIMITS,
+  reviveReaderSettings
 } from '@core/domain/settings'
 
 describe('normalizeReaderSettings', () => {
@@ -51,6 +52,37 @@ describe('normalizeReaderSettings', () => {
   it('返回值是纯数据，修改它不会污染默认配置', () => {
     const settings = normalizeReaderSettings()
     settings.fontSize = 30
+    expect(DEFAULT_READER_SETTINGS.fontSize).toBe(18)
+  })
+})
+
+describe('reviveReaderSettings', () => {
+  it('合法配置原样还原', () => {
+    const settings = { ...DEFAULT_READER_SETTINGS, fontSize: 24, theme: 'sepia' as const }
+    expect(reviveReaderSettings(settings)).toEqual(settings)
+  })
+
+  it('非对象一律回落到默认配置', () => {
+    expect(reviveReaderSettings(null)).toEqual(DEFAULT_READER_SETTINGS)
+    expect(reviveReaderSettings(undefined)).toEqual(DEFAULT_READER_SETTINGS)
+    expect(reviveReaderSettings('night')).toEqual(DEFAULT_READER_SETTINGS)
+    expect(reviveReaderSettings(7)).toEqual(DEFAULT_READER_SETTINGS)
+    expect(reviveReaderSettings([])).toEqual(DEFAULT_READER_SETTINGS)
+  })
+
+  it('残缺对象逐字段收敛，而不是整份丢弃', () => {
+    expect(reviveReaderSettings({ fontSize: 22 })).toEqual({ ...DEFAULT_READER_SETTINGS, fontSize: 22 })
+  })
+
+  it('多余字段会被剔除，落盘不会带上脏数据', () => {
+    const revived = reviveReaderSettings({ fontSize: 20, 恶意字段: 'x' } as unknown)
+
+    expect(Object.keys(revived).sort()).toEqual(['fontFamily', 'fontSize', 'lineHeight', 'pageMargin', 'theme'])
+  })
+
+  it('返回值是纯数据，改它不影响默认配置', () => {
+    const revived = reviveReaderSettings(null)
+    revived.fontSize = 30
     expect(DEFAULT_READER_SETTINGS.fontSize).toBe(18)
   })
 })

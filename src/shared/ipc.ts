@@ -2,6 +2,7 @@ import type { BookRepository } from '../core/ports/bookRepository'
 import type { BookImporter } from '../core/ports/bookImporter'
 import type { CoverReader } from '../core/ports/bookCover'
 import type { BookContentReader } from '../core/ports/bookContent'
+import type { SettingsRepository } from '../core/ports/settingsRepository'
 
 /** IPC 频道名集中定义，避免主进程与 preload 各写一份字符串而写错。 */
 export const BOOK_CHANNELS = {
@@ -20,6 +21,11 @@ export const LIBRARY_CHANNELS = {
   readContent: 'library:read-content'
 } as const
 
+export const SETTINGS_CHANNELS = {
+  load: 'settings:load',
+  save: 'settings:save'
+} as const
+
 export interface RuntimeVersions {
   node: string
   chrome: string
@@ -33,4 +39,5 @@ export interface AppBridge {
   library: BookImporter
   cover: CoverReader
   content: BookContentReader
+  settings: SettingsRepository
 }

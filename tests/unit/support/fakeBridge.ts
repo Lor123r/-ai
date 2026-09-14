@@ -1,7 +1,9 @@
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
+import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepository'
 import type { BookCover, CoverReader } from '@core/ports/bookCover'
 import type { BookContentReader } from '@core/ports/bookContent'
 import type { BookImporter } from '@core/ports/bookImporter'
+import type { SettingsRepository } from '@core/ports/settingsRepository'
 import type { AppBridge, RuntimeVersions } from '@shared/ipc'
 
 export const DEFAULT_VERSIONS: RuntimeVersions = {
@@ -31,6 +33,11 @@ export function createFakeContentReader(books: Record<string, Uint8Array> = {}):
   }
 }
 
+/** 默认设置仓库是全新的内存实现（等同从未保存过设置）。 */
+export function createFakeSettingsRepository(): SettingsRepository {
+  return new InMemorySettingsRepository()
+}
+
 /** 造一个完整的 preload 桥，避免每个测试自己拼一份不完整的对象。 */
 export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): AppBridge {
   return {
@@ -38,7 +45,8 @@ export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): 
     books: new InMemoryBookRepository(),
     library: createFakeImporter(),
     cover: createFakeCoverReader(),
-    content: createFakeContentReader()
+    content: createFakeContentReader(),
+    settings: createFakeSettingsRepository()
   }
 }
 

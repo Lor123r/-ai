@@ -2,8 +2,10 @@ import { join } from 'node:path'
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { registerBooksIpc } from './ipc/booksIpc'
 import { registerLibraryIpc } from './ipc/libraryIpc'
+import { registerSettingsIpc } from './ipc/settingsIpc'
 import { FileBookStore } from './import/fileBookStore'
 import { openLibrary, resolveLibraryFilePath } from './storage/library'
+import { openSettings, resolveSettingsFilePath } from './storage/settings'
 
 const isDev = !app.isPackaged
 
@@ -59,6 +61,7 @@ void app.whenReady().then(async () => {
   }
 
   registerBooksIpc(ipcMain, repository)
+  registerSettingsIpc(ipcMain, openSettings(resolveSettingsFilePath(userDataDir)))
   registerLibraryIpc(ipcMain, {
     repository,
     fileStore: new FileBookStore({ userDataDir }),

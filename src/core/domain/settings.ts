@@ -78,6 +78,16 @@ export function normalizeReaderSettings(patch?: Partial<ReaderSettings> | null):
   }
 }
 
+/**
+ * 把未知来源的配置还原为合法的阅读设置；非对象（含 null）回落到默认配置。
+ * 与 reviveBook / reviveLocator 不同，这里没有「必需字段」，
+ * 一份残缺的配置也能逐字段收敛，所以不必让调用方处理 null。
+ */
+export function reviveReaderSettings(raw: unknown): ReaderSettings {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ...DEFAULT_READER_SETTINGS }
+  return normalizeReaderSettings(raw as Partial<ReaderSettings>)
+}
+
 export function readerSettingsEqual(a: ReaderSettings, b: ReaderSettings): boolean {
   return (
     a.fontSize === b.fontSize &&

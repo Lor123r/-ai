@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AppBridge } from '@shared/ipc'
-import { BOOK_CHANNELS, LIBRARY_CHANNELS } from '@shared/ipc'
+import { BOOK_CHANNELS, LIBRARY_CHANNELS, SETTINGS_CHANNELS } from '@shared/ipc'
 
 const api: AppBridge = {
   versions: {
@@ -25,6 +25,10 @@ const api: AppBridge = {
   },
   content: {
     read: (bookId) => ipcRenderer.invoke(LIBRARY_CHANNELS.readContent, bookId)
+  },
+  settings: {
+    load: () => ipcRenderer.invoke(SETTINGS_CHANNELS.load),
+    save: (settings) => ipcRenderer.invoke(SETTINGS_CHANNELS.save, settings)
   }
 }
 
