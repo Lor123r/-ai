@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 15 |
-| 单元/组件测试 | 42 个文件 / **416** 个用例，全通过 |
+| 提交数 | 17 |
+| 单元/组件测试 | 43 个文件 / **421** 个用例，全通过 |
 | 端到端测试 | **8** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -164,6 +164,7 @@ flowchart TB
 ### 目录结构
 
 ```
+.claude/agents/         # 项目级子 Agent 定义（格式由 tests/unit/repo 守卫）
 src/
   core/                 # 纯逻辑层：可在 Node 与浏览器两种环境下测试
     domain/             #   Book / ReadingLocator / ReaderSettings / TocEntry + 归一化与复活
@@ -511,7 +512,7 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（42 文件 / 416 用例）
+### 单元测试地图（43 文件 / 421 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
@@ -525,6 +526,7 @@ return ePub(copy.buffer)
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
+| `tests/unit/repo` | 1 | 5 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用 |
 
 `tests/unit/reader/ReaderView.test.tsx`（31 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」这类交互。
 
@@ -581,6 +583,21 @@ test:e2e = build && playwright test
 - **交付前必须 `npm run verify` 全绿**，不接受「单测过了就行」。
 - 提交信息用中文 conventional commits（`feat:` / `fix:` / `test:` / `docs:` / `chore:`），并在末尾附 `Co-authored-by` trailer。
 
+### 用 `.claude/agents` 约束 Agent
+
+[AGENTS.md](AGENTS.md) 是入口，[.claude/agents/](.claude/agents) 是把它拆成可执行动作的子 Agent 定义：
+
+| 定义 | 用途 |
+| --- | --- |
+| [verify-runner.md](.claude/agents/verify-runner.md) | 跑验证命令并按约定汇报结果（只跑不改） |
+| [layering-guard.md](.claude/agents/layering-guard.md) | 审查改动是否破坏分层与安全边界（只读） |
+| [test-author.md](.claude/agents/test-author.md) | 按本仓库约定补测试、修测试确定性 |
+| [commit-crafter.md](.claude/agents/commit-crafter.md) | 按规范生成 Git 提交信息 |
+
+写这些定义时踩到一个反直觉的点：**`import.meta.url` 在 vitest 里只有测试回调内联读到的那次是本文件路径**，在模块作用域或辅助函数里读到的是错值，而且不报错。所以守护测试用 `process.cwd()` 定位仓库根。
+
+这些定义的格式由 [tests/unit/repo/agentDefinitions.test.ts](tests/unit/repo/agentDefinitions.test.ts) 守卫：文件名必须是 kebab-case、`name` 必须与文件名一致、必须有 `description`，并且每个定义都要在 `AGENTS.md` 里被引用。**格式错的子 Agent 定义不会被任何工具报出来，只会静默不生效**，所以必须用测试钉住。
+
 ### Windows / PowerShell 环境注意
 
 - 本项目在 Windows 上开发，PowerShell 为 **5.1**（不支持 `&&`、`||`、`??`、`?.`）。命令串联请用 `;` 配合 `if ($?) { ... }`。
@@ -610,6 +627,8 @@ test:e2e = build && playwright test
 | 13 | `a38bf99` | 收尾 | 补 `settings.ts` 落盘的单测 |
 | 14 | `93c0ac5` | 收尾 | 覆盖目录跳转与阅读设置落盘的 E2E，fixture 支持 EPUB 3 导航 |
 | 15 | `758309c` | 收尾 | 固定 fixture 的 zip 时间戳，修掉重复导入用例的偶发失败 |
+| 16 | `9b5229b` | 文档 | 补项目总文档 `README.md` |
+| 17 | `—` | 规范 | 添加 `.claude/agents` 子 Agent 定义纳入 Git，用单测守卫格式并在 `AGENTS.md` 里引用 |
 
 ### 过程中沉淀下来的经验
 
