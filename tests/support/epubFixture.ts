@@ -35,6 +35,21 @@ function joinPath(...parts: string[]): string {
 }
 
 /**
+ * 固定 zip 条目的时间戳，让 fixture 的字节完全确定。
+ * JSZip 默认给每个条目盖当前时间，而 zip 的 DOS 时间戳只有 2 秒精度，
+ * 于是「同一份 fixture 生成两次」会得到不同字节，按内容哈希去重的断言随之随机失败。
+ * 注意 `zip.file` 的 `date` 选项只作用于显式添加的文件，JSZip 隐式补出的目录条目
+ * （如 `META-INF/`）仍取当前时间，所以要在生成前对所有条目统一盖一遍。
+ * 单测用导出的 `FIXTURE_DATE` 断言生成结果确实被固定住了。
+ */
+export const FIXTURE_DATE = new Date('1999-05-06T12:00:00Z')
+
+async function generateZip(zip: JSZip): Promise<Uint8Array> {
+  for (const entry of Object.values(zip.files)) entry.date = FIXTURE_DATE
+  return zip.generateAsync({ type: 'uint8array' })
+}
+
+/**
  * 用 JSZip 现场拼一个最小可用的 EPUB。
  * 测试里现造而不是提交二进制 fixture，改了结构就能立刻反映到断言上，
  * 而且能轻易造出各种残缺版本（缺 container、缺书名、路径越界）。
@@ -109,7 +124,7 @@ export async function buildEpubBytes(options: EpubFixtureOptions = {}): Promise<
     )
   }
 
-  return zip.generateAsync({ type: 'uint8array' })
+  return generateZip(zip)
 }
 
 /** 把 EPUB 写到磁盘，导入流程的测试与 E2E 都需要一个真实文件。 */
@@ -123,7 +138,7 @@ export async function buildEpubFile(filePath: string, options: EpubFixtureOption
 export async function buildZipBytes(entries: Record<string, string>): Promise<Uint8Array> {
   const zip = new JSZip()
   for (const [name, content] of Object.entries(entries)) zip.file(name, content)
-  return zip.generateAsync({ type: 'uint8array' })
+  return generateZip(zip)
 }
 
 /** 把任意结构的 zip 落到磁盘。 */
