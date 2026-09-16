@@ -207,6 +207,30 @@ describe('parseAnnotations', () => {
     expect(parsed.annotations.some((item) => item.bookId === 'b2')).toBe(true)
   })
 
+  it('dropped 是三种原因的合并计数，不区分来源', () => {
+    const fill = Array.from({ length: MAX_ANNOTATIONS_PER_BOOK }, (_, index) => bookmark(`a${index}`, NOW - index))
+
+    const parsed = parseAnnotations(
+      JSON.stringify({
+        version: 1,
+        annotations: [
+          // ① 字段非法：bookId 是空白
+          { ...bookmark('bad', NOW), bookId: '  ' },
+          ...fill,
+          // ② 同一个 id 出现两次，只有一条能留下
+          bookmark('dup', NOW - 100),
+          bookmark('dup', NOW - 200)
+        ]
+      }),
+      NOW
+    )
+
+    expect(parsed.annotations).toHaveLength(MAX_ANNOTATIONS_PER_BOOK)
+    expect(parsed.annotations.filter((item) => item.id === 'dup')).toHaveLength(1)
+    // 一条坏数据 + 一条重复 + 超限裁掉的一条，三种来源共用一个计数
+    expect(parsed.dropped).toBe(3)
+  })
+
   it('输出顺序与输入数组顺序无关', () => {
     const items = [
       bookmark('a', NOW - 2000),

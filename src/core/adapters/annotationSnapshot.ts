@@ -70,7 +70,18 @@ export function serializeAnnotations(annotations: Iterable<Annotation>): string 
 
 export interface ParsedAnnotations {
   annotations: Annotation[]
-  /** 被丢弃的条目数量，用于诊断而不是静默吞掉。 */
+  /**
+   * 被丢弃的条目数量，用于诊断而不是静默吞掉。
+   *
+   * 三种原因**合并计数**，不区分来源：
+   * ① 字段非法导致 reviveAnnotation 返回 null；
+   * ② 同一个 (bookId, id) 出现多次，只保留排序后靠前的那条；
+   * ③ 超出 MAX_ANNOTATIONS_PER_BOOK 被裁掉。
+   *
+   * ③ 不是数据损坏，而是对超限存档的正常裁剪，所以这个数偏大并不等于存档有问题。
+   * 目前没有生产调用方读它（JsonAnnotationRepository.ensureLoaded 直接丢弃），
+   * 界面真要区分「数据坏了」和「正常裁剪」，得先把这个数拆成明细。
+   */
   dropped: number
 }
 

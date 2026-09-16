@@ -112,6 +112,32 @@ describe('parseLibrary', () => {
     expect(parsed.dropped).toBe(1)
   })
 
+  it('dropped 是三种原因的合并计数，不区分来源', () => {
+    const text = JSON.stringify({
+      version: 1,
+      books: [
+        // ① 书籍字段非法
+        { id: 'no-format', filePath: 'C:/x.epub' },
+        book('a', NOW),
+        book('b', NOW - 1000)
+      ],
+      locators: {
+        a: locator(0.5),
+        // ② 孤儿进度：没有对应书籍
+        ghost: locator(0.9),
+        // ③ 进度字段非法
+        b: 'not-an-object'
+      }
+    })
+
+    const parsed = parseLibrary(text, NOW)
+
+    expect(parsed.books.map((item) => item.id).sort()).toEqual(['a', 'b'])
+    expect(parsed.locators.size).toBe(1)
+    // 一条坏书 + 一条孤儿进度 + 一条坏进度，三种来源共用一个计数
+    expect(parsed.dropped).toBe(3)
+  })
+
   it('缺失时间戳的书籍用注入的当前时间兜底，保证字段完整', () => {
     const text = JSON.stringify({
       version: 1,

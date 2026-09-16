@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 21 |
-| 单元/组件测试 | 49 个文件 / **539** 个用例，全通过 |
+| 提交数 | 23 |
+| 单元/组件测试 | 49 个文件 / **541** 个用例，全通过 |
 | 端到端测试 | **9** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -486,6 +486,8 @@ return bridge?.books ?? new InMemoryBookRepository()
 
 `library.json` 与 `annotations.json` 的解析都是**宽容**的：整份文件不是合法 JSON / 根节点不是对象才算「损坏」（分别抛 `LibraryCorruptError` 与 `AnnotationCorruptError`）；单条记录坏了只丢弃那一条并计入 `dropped`。没有对应书籍的进度被当作垃圾数据丢弃，避免无限增长；注解存档独立成档，没有 `books` 数组，也就没有「孤儿记录」那一档。
 
+**`dropped` 是三种原因的合并计数**，两边同义：[ParsedLibrary](src/core/adapters/librarySnapshot.ts:38) 把「书籍字段非法」「孤儿进度」「进度字段非法」加在一起，[ParsedAnnotations](src/core/adapters/annotationSnapshot.ts:71) 把「注解字段非法」「同一 `(bookId, id)` 重复」「超出上限被裁」加在一起。其中「孤儿进度」与「超限裁剪」**不是数据损坏**，而是有意的回收，所以这个数偏大并不等于存档有问题。它现在只有测试在读（两个仓储的 `ensureLoaded` 都直接丢弃），界面真要区分「数据坏了」和「正常回收」，得先把这个数拆成明细。
+
 注解的恢复流程与书库的**刻意不共用**，且比它多一道守卫：备份用的 `rename` 失败时（Windows 上文件被占用是常态）**跳过那次重读**。磁盘上躺着的仍是那个坏文件，再读一次必然二次抛错，而启动路径上没有 `catch` 兜住它——书库那边的恢复流程正是踩在这个点上：一旦 `rename` 抛错，异常会一路穿到 `whenReady` 回调并让窗口起不来，注解这边不能复制这个错。`recoveredFiles` 的语义两边保持一致：只表示「这次是救回来的启动」，不表示备份真的成功。
 
 ### 路径越界防护
@@ -541,13 +543,13 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（49 文件 / 539 用例）
+### 单元测试地图（49 文件 / 541 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
 | `core/domain` | 7 | 142 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
-| `core/adapters` | 7 | 99 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写 |
+| `core/adapters` | 7 | 101 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写、`dropped` 的合并语义 |
 | `core/services` | 1 | 13 | 导入编排：去重、坏文件清理、书名兜底 |
 | `main` | 7 | 84 | IPC 入参校验、书库与注解的恢复流程、文件落盘与越界防护、设置存储 |
 | `renderer/data` | 4 | 9 | 有无 IPC 桥时的实现选择 |
@@ -668,7 +670,9 @@ test:e2e = build && playwright test
 | 18 | `338c2bf` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
 | 19 | `09df618` | 规范 | 收窄子 Agent 能力边界：删掉 `tools:` 里的执行能力、声明无命令权限、用单测钉住 |
 | 20 | `206253d` | 功能 | 书签与划线的存档层：`AnnotationCorruptError`、`annotations.json` 快照、JSON 仓储、独立于书库的恢复流程 |
-| 21 | `—` | 功能 | 注解 id 生成的三档降级与 E2E 探针；`remove` 对齐「零改动零写盘」 |
+| 21 | `f996cfe` | 文档 | 回填迭代历程第 20 行的提交号 |
+| 22 | `8fe071f` | 功能 | 注解 id 的三档降级与 E2E 探针；`remove` 对齐「零改动零写盘」 |
+| 23 | `—` | 文档 | 写明 `dropped` 是三种原因的合并计数，并用单测钉住 |
 
 ### 过程中沉淀下来的经验
 

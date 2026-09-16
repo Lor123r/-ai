@@ -38,7 +38,18 @@ export function serializeLibrary(books: Iterable<Book>, locators: Map<string, Re
 export interface ParsedLibrary {
   books: Book[]
   locators: Map<string, ReadingLocator>
-  /** 被丢弃的条目数量，用于诊断而不是静默吞掉。 */
+  /**
+   * 被丢弃的条目数量，用于诊断而不是静默吞掉。
+   *
+   * 三种原因**合并计数**，不区分来源，与 ParsedAnnotations 的 dropped 同义：
+   * ① 字段非法导致 reviveBook 返回 null；
+   * ② 进度没有对应书籍（孤儿进度，刻意清理）；
+   * ③ 字段非法导致 reviveLocator 返回 null。
+   *
+   * ② 不是数据损坏，而是防止孤儿进度无限增长的有意回收，所以这个数偏大并不等于
+   * 存档有问题。目前没有生产调用方读它（JsonBookRepository.ensureLoaded 直接丢弃），
+   * 界面真要区分「数据坏了」和「正常回收」，得先把这个数拆成明细。
+   */
   dropped: number
 }
 
