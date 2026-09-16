@@ -344,6 +344,107 @@ body {
   background: var(--line);
 }
 
+/*
+ * 选区浮条：绝对定位在 .reader__body 里，坐标由 placeSelectionToolbar 算好。
+ * 选择集在 iframe 里，浮层在宿主文档里，两边没有共同的定位上下文，只能靠算坐标。
+ */
+.selection-toolbar {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 16%);
+}
+
+.selection-toolbar button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.selection-toolbar button:hover {
+  background: var(--line);
+}
+
+.annotation-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.annotation-list__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.annotation-list__kind {
+  grid-row: span 2;
+  color: var(--ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.annotation-list__jump {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  cursor: pointer;
+}
+
+.annotation-list__jump:hover {
+  text-decoration: underline;
+}
+
+.annotation-list__meta {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.annotation-list__remove {
+  grid-row: span 2;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.annotation-list__remove:hover {
+  color: var(--ink);
+}
+
+.reader__annotation-error {
+  margin: 0;
+  padding: 6px 24px;
+  color: #a2402c;
+  font-size: 13px;
+}
+
 .setting-row {
   display: flex;
   align-items: center;

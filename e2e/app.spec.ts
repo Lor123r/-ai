@@ -601,3 +601,227 @@ test('渲染进程的 WebCrypto 满足注解 id 生成的降级假设', async ()
     await rm(userDataDir, { recursive: true, force: true })
   }
 })
+
+/** 只在正文 iframe 里成立的对象；主进程工程没有 DOM lib，所以在这里自己声明。 */
+interface FrameSelectionScope {
+  document: {
+    body: { querySelector(selector: string): { firstChild: FrameTextNode | null } | null }
+    createRange(): FrameRange
+    getSelection(): FrameSelection | null
+  }
+}
+
+interface FrameTextNode {
+  length: number
+}
+
+interface FrameRange {
+  setStart(node: FrameTextNode, offset: number): void
+  setEnd(node: FrameTextNode, offset: number): void
+}
+
+interface FrameSelection {
+  removeAllRanges(): void
+  addRange(range: FrameRange): void
+}
+
+/**
+ * 在正文 iframe 里手工造一个覆盖整段正文的选区。
+ *
+ * 三个坑：epub.js 的 selected 事件监听的是 iframe 文档上的 selectionchange，
+ * 内部还有 250ms 防抖，所以造完选区不能立刻断言；转场期间新旧章节会同时存在，
+ * 只能挑第一个真的造出选区的 frame。返回 false 表示没有可选的正文。
+ */
+async function selectChapterText(page: Page): Promise<boolean> {
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue
+
+    const selected = await frame
+      .evaluate(() => {
+        const scope = globalThis as unknown as FrameSelectionScope
+        const text = scope.document.body.querySelector('p')?.firstChild
+        if (!text) return false
+
+        const selection = scope.document.getSelection()
+        if (!selection) return false
+
+        const range = scope.document.createRange()
+        range.setStart(text, 0)
+        range.setEnd(text, text.length)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return true
+      })
+      .catch(() => false)
+
+    if (selected) return true
+  }
+
+  return false
+}
+
+/**
+ * 正文里的划线标记数量。epub.js 会给每条划线对应的 SVG 分组盖上 ref 属性，
+ * 类名没显式传时就是它自带的 epubjs-hl。图层挂在宿主文档的阅读区里，不在 iframe 内。
+ */
+async function highlightMarkCount(page: Page): Promise<number> {
+  return page.locator('.reader__viewport [ref^="epubjs-hl"]').count()
+}
+
+/** 数一数注解存档里有多少条；文件还没写出来时返回 -1，交给 expect.poll 继续等。 */
+async function savedAnnotationCount(annotationsPath: string): Promise<number> {
+  try {
+    const snapshot = JSON.parse(await readFile(annotationsPath, 'utf8')) as { annotations: unknown[] }
+    return snapshot.annotations.length
+  } catch {
+    return -1
+  }
+}
+
+test('在正文里划线会落盘，重启后重新画回正文', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(first, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+      expect(await highlightMarkCount(page)).toBe(0)
+
+      // 造出选区后 epub.js 要等防抖过去才会报选中，浮条的出现本身就是这条链路的断言
+      expect(await selectChapterText(page)).toBe(true)
+      const toolbar = reader.getByRole('toolbar', { name: '选中文字的操作' })
+      await expect(toolbar).toBeVisible()
+      await toolbar.getByRole('button', { name: '划线', exact: true }).click()
+
+      // 划线先落到本地列表再落到存档上，两处都要能看到才算真的画下去了
+      await expect.poll(() => highlightMarkCount(page)).toBeGreaterThan(0)
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+
+      const snapshot = JSON.parse(await readFile(annotationsPath, 'utf8')) as {
+        annotations: { kind: string; cfi: string; excerpt: string }[]
+      }
+      const saved = snapshot.annotations[0]
+      expect(saved?.kind).toBe('highlight')
+      // 摘录与 cfi 都得来自真实的 iframe 选区，不是界面上拼出来的占位
+      expect(saved?.excerpt).toBe('第 1 章正文')
+      expect(saved?.cfi).toMatch(/^epubcfi\(/)
+
+      await reader.getByRole('button', { name: '注解', exact: true }).click()
+      const drawer = reader.getByRole('complementary', { name: '注解' })
+      await expect(drawer.locator('.annotation-list__kind')).toHaveText('划线')
+      await expect(drawer.getByRole('button', { name: '删除 第 1 章正文' })).toBeVisible()
+      await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
+    } finally {
+      await first.close()
+    }
+
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+
+      // 存档里的划线要在新 rendition 上重新注入，而不是只躺在列表里
+      await expect.poll(() => highlightMarkCount(page)).toBeGreaterThan(0)
+
+      await reader.getByRole('button', { name: '注解', exact: true }).click()
+      const drawer = reader.getByRole('complementary', { name: '注解' })
+      await expect(drawer.getByRole('button', { name: '删除 第 1 章正文' })).toBeVisible()
+      await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('删掉已有的划线后，重启也不会再画回来', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+  let removedId = ''
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(first, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      expect(await selectChapterText(page)).toBe(true)
+      const toolbar = reader.getByRole('toolbar', { name: '选中文字的操作' })
+      await expect(toolbar).toBeVisible()
+      await toolbar.getByRole('button', { name: '划线', exact: true }).click()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+
+      const seeded = JSON.parse(await readFile(annotationsPath, 'utf8')) as {
+        annotations: { id: string }[]
+      }
+      removedId = seeded.annotations[0]?.id ?? ''
+      expect(removedId).not.toBe('')
+
+      await reader.getByRole('button', { name: '注解', exact: true }).click()
+      const drawer = reader.getByRole('complementary', { name: '注解' })
+      const remove = drawer.getByRole('button', { name: '删除 第 1 章正文' })
+      await expect(remove).toBeVisible()
+      await remove.click()
+
+      // 列表、正文标记、存档三处都要跟着消失，只抹掉界面上的那一行不算删干净
+      await expect(drawer.getByText('还没有书签或划线')).toBeVisible()
+      await expect.poll(() => highlightMarkCount(page)).toBe(0)
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(0)
+      expect(await readFile(annotationsPath, 'utf8')).not.toContain(removedId)
+    } finally {
+      await first.close()
+    }
+
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      await reader.getByRole('button', { name: '注解', exact: true }).click()
+      const drawer = reader.getByRole('complementary', { name: '注解' })
+      await expect(drawer.getByText('还没有书签或划线')).toBeVisible()
+      expect(await highlightMarkCount(page)).toBe(0)
+      await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})

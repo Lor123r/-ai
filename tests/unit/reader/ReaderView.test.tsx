@@ -2,15 +2,25 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createLocator } from '@core/domain/progress'
 import { DEFAULT_READER_SETTINGS } from '@core/domain/settings'
+import { createBookmark, createHighlight } from '@core/domain/annotation'
+import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
+import type { AnnotationRepository } from '@core/ports/annotationRepository'
 import type { BookRepository } from '@core/ports/bookRepository'
 import type { SettingsRepository } from '@core/ports/settingsRepository'
+import { AnnotationRepositoryProvider } from '@renderer/data/AnnotationRepositoryProvider'
 import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
 import { SettingsRepositoryProvider } from '@renderer/data/SettingsRepositoryProvider'
 import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepository'
 import ReaderView from '@renderer/reader/ReaderView'
+import {
+  ANNOTATIONS_UNAVAILABLE_MESSAGE,
+  ANNOTATION_SAVE_FAILED_MESSAGE
+} from '@renderer/reader/useBookAnnotations'
 import type {
+  EpubAnnotationLayer,
   EpubBook,
+  EpubContents,
   EpubNavItem,
   EpubRelocation,
   EpubRendition
@@ -32,8 +42,20 @@ interface FakeEpub {
   override: ReturnType<typeof vi.fn>
   destroyRendition: ReturnType<typeof vi.fn>
   destroyBook: ReturnType<typeof vi.fn>
+  annotations: FakeAnnotationLayer
   /** 模拟 epub.js 翻页后抛出 relocated 事件。 */
   relocate: (location: EpubRelocation) => void
+  /** 模拟 epub.js 在 iframe 里选中文字后抛出 selected 事件。 */
+  select: (cfiRange: string, contents: EpubContents) => void
+}
+
+interface FakeAnnotationLayer {
+  add: EpubAnnotationLayer['add']
+  remove: EpubAnnotationLayer['remove']
+  /** 画过的标记，按调用顺序；断言重复 add / 孤儿 mark 就靠它。 */
+  added: { type: string; cfiRange: string; styles: object | undefined }[]
+  /** 擦过的标记，按调用顺序。 */
+  removed: { cfiRange: string; type: string }[]
 }
 
 interface FakeEpubOptions {
@@ -59,16 +81,38 @@ function fakeEpub(options: FakeEpubOptions = {}): FakeEpub {
   const override = vi.fn()
   const destroyRendition = vi.fn()
   const destroyBook = vi.fn()
-  const relocationHandlers: ((location: EpubRelocation) => void)[] = []
+  // 真实 epub.js 按事件名分桶派发，假实现也必须照做：
+  // 混在一个数组里的话 relocated 的 handler 会被 selected 事件打到（设计稿 H5）
+  const listeners = new Map<string, ((...payload: never[]) => void)[]>()
+
+  function emit(event: string, ...payload: unknown[]): void {
+    for (const handler of listeners.get(event) ?? []) {
+      ;(handler as unknown as (...args: unknown[]) => void)(...payload)
+    }
+  }
+
+  const annotations: FakeAnnotationLayer = {
+    added: [],
+    removed: [],
+    add(type, cfiRange, _data, _callback, _className, styles) {
+      annotations.added.push({ type, cfiRange, styles })
+    },
+    remove(cfiRange, type) {
+      annotations.removed.push({ cfiRange, type })
+    }
+  }
 
   const rendition: EpubRendition = {
     display,
     next,
     prev,
     resize,
-    on: (_event, handler) => {
-      relocationHandlers.push(handler)
+    on: (event, handler) => {
+      const list = listeners.get(event) ?? []
+      list.push(handler as unknown as (...payload: never[]) => void)
+      listeners.set(event, list)
     },
+    annotations,
     destroy: destroyRendition
   }
   if (!options.withoutThemes) rendition.themes = { override }
@@ -96,9 +140,9 @@ function fakeEpub(options: FakeEpubOptions = {}): FakeEpub {
     override,
     destroyRendition,
     destroyBook,
-    relocate: (location) => {
-      for (const handler of relocationHandlers) handler(location)
-    }
+    annotations,
+    relocate: (location) => emit('relocated', location),
+    select: (cfiRange, contents) => emit('selected', cfiRange, contents)
   }
 }
 
@@ -109,6 +153,7 @@ interface RenderOptions {
   onClose?: () => void
   repository?: BookRepository
   settingsRepository?: SettingsRepository
+  annotationRepository?: AnnotationRepository
   reader?: { read: (bookId: string) => Promise<Uint8Array | null> } | null
   now?: () => number
 }
@@ -118,6 +163,7 @@ interface RenderResult {
   createBook: ReturnType<typeof vi.fn>
   onClose: ReturnType<typeof vi.fn>
   settings: SettingsRepository
+  annotations: AnnotationRepository
 }
 
 async function renderReader(options: RenderOptions = {}): Promise<RenderResult> {
@@ -126,6 +172,7 @@ async function renderReader(options: RenderOptions = {}): Promise<RenderResult> 
   const onClose = vi.fn(options.onClose)
   const repository = options.repository ?? (await seedRepository()).repository
   const settings = options.settingsRepository ?? new InMemorySettingsRepository()
+  const annotations = options.annotationRepository ?? new InMemoryAnnotationRepository()
   const reader =
     options.reader === undefined
       ? { read: async () => (options.bytes === undefined ? new Uint8Array([1, 2, 3]) : options.bytes) }
@@ -135,19 +182,21 @@ async function renderReader(options: RenderOptions = {}): Promise<RenderResult> 
     <BookRepositoryProvider repository={repository}>
       <BookContentReaderProvider reader={reader}>
         <SettingsRepositoryProvider repository={settings}>
-          <ReaderView
-            bookId="book-1"
-            title={options.title ?? '三体'}
-            onClose={onClose}
-            createBook={createBook}
-            now={options.now}
-          />
+          <AnnotationRepositoryProvider repository={annotations}>
+            <ReaderView
+              bookId="book-1"
+              title={options.title ?? '三体'}
+              onClose={onClose}
+              createBook={createBook}
+              now={options.now}
+            />
+          </AnnotationRepositoryProvider>
         </SettingsRepositoryProvider>
       </BookContentReaderProvider>
     </BookRepositoryProvider>
   )
 
-  return { epub, createBook, onClose, settings }
+  return { epub, createBook, onClose, settings, annotations }
 }
 
 describe('ReaderView', () => {
@@ -613,5 +662,242 @@ describe('ReaderView 阅读设置', () => {
 
     expect(epub.override).toHaveBeenCalledWith('font-size', `${DEFAULT_READER_SETTINGS.fontSize}px`, true)
     expect(screen.getByText('阅读中')).toBeInTheDocument()
+  })
+})
+
+describe('ReaderView 书签与划线', () => {
+  /** 一处能同时喂给书签与划线的落点，百分比固定 55%。 */
+  const LOCATION: EpubRelocation = {
+    start: { index: 5, cfi: 'epubcfi(/6/12!/4/2)', displayed: { page: 6, total: 11 } },
+    atEnd: false
+  }
+  const SELECTED_CFI = 'epubcfi(/6/12!/4/10)'
+
+  /** 造一份 iframe 里的选区：位置固定，只有摘录随用例变。 */
+  function contents(excerpt = '一段摘录'): EpubContents {
+    const rect = { top: 100, left: 120, width: 80, height: 20 } as DOMRect
+
+    return {
+      window: {
+        getSelection: () => ({
+          rangeCount: 1,
+          toString: () => excerpt,
+          getRangeAt: () => ({ getBoundingClientRect: () => rect })
+        }),
+        frameElement: { getBoundingClientRect: () => rect }
+      }
+    }
+  }
+
+  async function renderReady(options: RenderOptions = {}): Promise<RenderResult> {
+    const result = await renderReader(options)
+    await waitFor(() => {
+      expect(screen.getByText('阅读中')).toBeInTheDocument()
+    })
+    return result
+  }
+
+  /** 落一次点：书签按钮要有 epub.js 报过的位置才可用。 */
+  async function relocate(epub: FakeEpub, location: EpubRelocation = LOCATION): Promise<void> {
+    epub.relocate(location)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /书签$/ })).toBeEnabled()
+    })
+  }
+
+  function openAnnotations(): HTMLElement {
+    fireEvent.click(screen.getByRole('button', { name: '注解' }))
+    return screen.getByRole('complementary', { name: '注解' })
+  }
+
+  /** 读不到存档的仓储：所有动作都失败，与「没有注解」必须区分开。 */
+  function unreadableRepository(): AnnotationRepository {
+    const reason = new Error('存档损坏')
+    return {
+      load: () => Promise.resolve(),
+      listByBook: () => Promise.reject(reason),
+      save: () => Promise.reject(reason),
+      remove: () => Promise.reject(reason),
+      removeByBook: () => Promise.reject(reason)
+    }
+  }
+
+  it('还没翻过页时没有落点，书签按钮一直是禁用的', async () => {
+    await renderReader()
+
+    expect(screen.getByRole('button', { name: '加书签' })).toBeDisabled()
+  })
+
+  it('翻过页之后可以加书签，再点一次就是取消', async () => {
+    const { epub, annotations } = await renderReady()
+    await relocate(epub)
+
+    const toggle = screen.getByRole('button', { name: '加书签' })
+    fireEvent.click(toggle)
+    const remove = await screen.findByRole('button', { name: '移除书签' })
+    expect(screen.queryByRole('button', { name: '加书签' })).not.toBeInTheDocument()
+
+    openAnnotations()
+    expect(screen.getByRole('button', { name: '55% 处的书签' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '关闭注解' }))
+
+    fireEvent.click(remove)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '加书签' })).toBeInTheDocument()
+    })
+    await expect(annotations.listByBook('book-1')).resolves.toEqual([])
+  })
+
+  it('打开书时把存档里的划线画回正文', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createHighlight(
+        { id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录', color: 'green' },
+        0
+      )
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+    expect(epub.annotations.added[0]).toMatchObject({
+      type: 'highlight',
+      cfiRange: SELECTED_CFI,
+      styles: { fill: '#4aa96c', 'fill-opacity': '0.35' }
+    })
+  })
+
+  it('选中文字弹出浮条，点划线后落盘并画到正文上', async () => {
+    const { epub, annotations } = await renderReady()
+    await relocate(epub)
+
+    epub.select(SELECTED_CFI, contents())
+
+    const toolbar = await screen.findByRole('toolbar', { name: '选中文字的操作' })
+    expect(toolbar).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '划线' }))
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+    expect(epub.annotations.added[0]).toMatchObject({ cfiRange: SELECTED_CFI, type: 'highlight' })
+    expect(screen.queryByRole('toolbar', { name: '选中文字的操作' })).not.toBeInTheDocument()
+
+    openAnnotations()
+    expect(screen.getByRole('button', { name: '一段摘录' })).toBeInTheDocument()
+    await expect(annotations.listByBook('book-1')).resolves.toMatchObject([
+      { kind: 'highlight', cfi: SELECTED_CFI, excerpt: '一段摘录', percent: 0.55, chapterHref: '' }
+    ])
+  })
+
+  it('同一段选区再选一次，浮条上的按钮变成删除', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createHighlight({ id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录' }, 0)
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+    await relocate(epub)
+
+    epub.select(SELECTED_CFI, contents())
+
+    fireEvent.click(await screen.findByRole('button', { name: '删除划线' }))
+
+    await waitFor(() => {
+      expect(epub.annotations.removed).toContainEqual({ cfiRange: SELECTED_CFI, type: 'highlight' })
+    })
+    await expect(repository.listByBook('book-1')).resolves.toEqual([])
+  })
+
+  it('翻页后收起浮条，免得它飘在一处已经翻走的选区上', async () => {
+    const { epub } = await renderReady()
+    await relocate(epub)
+    epub.select(SELECTED_CFI, contents())
+    expect(await screen.findByRole('toolbar', { name: '选中文字的操作' })).toBeInTheDocument()
+
+    epub.relocate({ ...LOCATION, start: { index: 6, cfi: 'epubcfi(/6/14!/4/2)' } })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('toolbar', { name: '选中文字的操作' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('摘录为空或取不到选区时不弹浮条', async () => {
+    const { epub } = await renderReady()
+    await relocate(epub)
+
+    epub.select(SELECTED_CFI, contents(''))
+    expect(screen.queryByRole('toolbar', { name: '选中文字的操作' })).not.toBeInTheDocument()
+
+    epub.select(SELECTED_CFI, contents('摘录'))
+    expect(await screen.findByRole('toolbar', { name: '选中文字的操作' })).toBeInTheDocument()
+
+    epub.select(SELECTED_CFI, { window: { getSelection: () => null } })
+    await waitFor(() => {
+      expect(screen.queryByRole('toolbar', { name: '选中文字的操作' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('点注解里的条目跳回原文并收起抽屉', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createBookmark({ id: 'bm-1', bookId: 'book-1', cfi: 'epubcfi(/6/6!/4/2)', percent: 0.25 }, 0)
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+
+    openAnnotations()
+    fireEvent.click(await screen.findByRole('button', { name: '25% 处的书签' }))
+
+    await waitFor(() => {
+      expect(epub.display).toHaveBeenLastCalledWith('epubcfi(/6/6!/4/2)')
+    })
+    expect(screen.queryByRole('complementary', { name: '注解' })).not.toBeInTheDocument()
+  })
+
+  it('读不到注解存档时给出文案，正文照常可读', async () => {
+    const { epub } = await renderReady({ annotationRepository: unreadableRepository() })
+
+    openAnnotations()
+    expect(await screen.findByText(ANNOTATIONS_UNAVAILABLE_MESSAGE)).toBeInTheDocument()
+    expect(screen.getByText('阅读中')).toBeInTheDocument()
+
+    // 存不进就谈不上划线，浮条不该出现
+    epub.relocate(LOCATION)
+    epub.select(SELECTED_CFI, contents())
+    expect(screen.queryByRole('toolbar', { name: '选中文字的操作' })).not.toBeInTheDocument()
+  })
+
+  it('写不进去时提示失败，并且不假装书签已经存好', async () => {
+    const inner = new InMemoryAnnotationRepository()
+    const unwritable: AnnotationRepository = {
+      load: () => inner.load(),
+      listByBook: (bookId) => inner.listByBook(bookId),
+      save: () => Promise.reject(new Error('磁盘满了')),
+      remove: (bookId, id) => inner.remove(bookId, id),
+      removeByBook: (bookId) => inner.removeByBook(bookId)
+    }
+    const { epub } = await renderReady({ annotationRepository: unwritable })
+    await relocate(epub)
+
+    fireEvent.click(screen.getByRole('button', { name: '加书签' }))
+
+    expect(await screen.findByText(ANNOTATION_SAVE_FAILED_MESSAGE)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '加书签' })).toBeInTheDocument()
+  })
+
+  it('销毁 rendition 前先把画过的标记擦干净', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createHighlight({ id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录' }, 0)
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+
+    cleanup()
+
+    expect(epub.annotations.removed).toContainEqual({ cfiRange: SELECTED_CFI, type: 'highlight' })
   })
 })
