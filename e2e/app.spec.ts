@@ -678,6 +678,15 @@ async function savedAnnotationCount(annotationsPath: string): Promise<number> {
   }
 }
 
+/** 存档文件里是否还留着某本书的痕迹；文件不存在按「没有」处理。 */
+async function annotationsMention(annotationsPath: string, bookId: string): Promise<boolean> {
+  try {
+    return (await readFile(annotationsPath, 'utf8')).includes(bookId)
+  } catch {
+    return false
+  }
+}
+
 test('在正文里划线会落盘，重启后重新画回正文', async () => {
   const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
   const sourceDir = join(userDataDir, 'sources')
@@ -820,6 +829,66 @@ test('删掉已有的划线后，重启也不会再画回来', async () => {
       await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
     } finally {
       await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('删书会连这本书的注解一起清掉，再导入同一个文件不会复活', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+  let bookId = ''
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      // 书籍 id 是文件内容的 sha256，先从桥里取回来，后面两处断言都要用它
+      const shelf = await page.evaluate(() => (globalThis as unknown as BridgeWindow).api!.books.list())
+      bookId = shelf[0]?.id ?? ''
+      expect(bookId).not.toBe('')
+
+      await saveAnnotation(page, bookId)
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+
+      await page.getByRole('button', { name: '删除《三体》' }).click()
+      await expect(page.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeVisible()
+
+      // 界面上少一张卡不算数：存档里的条目与这本书的 key 都要真的消失
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(0)
+      await expect.poll(() => annotationsMention(annotationsPath, bookId)).toBe(false)
+      expect(
+        await page.evaluate(
+          (id) => (globalThis as unknown as BridgeWindow).api!.annotations.listByBook(id),
+          bookId
+        )
+      ).toEqual([])
+
+      // 同一个文件再导入一次，bookId 会一模一样，注解没有复活才算这条链真的通到了底
+      await stubFilePicker(app, [epubPath])
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await reader.getByRole('button', { name: '注解', exact: true }).click()
+
+      const drawer = reader.getByRole('complementary', { name: '注解' })
+      await expect(drawer.getByText('还没有书签或划线')).toBeVisible()
+      await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
+    } finally {
+      await app.close()
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })

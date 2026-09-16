@@ -1,10 +1,12 @@
 import type { IpcMain } from 'electron'
+import { createBookmark } from '@core/domain/annotation'
+import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { createBook } from '@core/domain/book'
 import { createLocator } from '@core/domain/progress'
 import { BOOK_CHANNELS } from '@shared/ipc'
 import { registerBooksIpc } from '../../../src/main/ipc/booksIpc'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
@@ -17,9 +19,18 @@ function sampleBook(id = 'a') {
   }
 }
 
+function sampleBookmark(bookId: string, id: string) {
+  return createBookmark({ id, bookId, cfi: `epubcfi(/6/4!/4/${id.length})`, chapterHref: 'ch1.xhtml' }, NOW)
+}
+
 /** 用一个假的 ipcMain 抓住注册的 handler，从而无需启动 Electron 就能测协议层。 */
-function setup(): { handlers: Map<string, Handler>; repository: InMemoryBookRepository } {
+function setup(): {
+  handlers: Map<string, Handler>
+  repository: InMemoryBookRepository
+  annotations: InMemoryAnnotationRepository
+} {
   const repository = new InMemoryBookRepository()
+  const annotations = new InMemoryAnnotationRepository()
   const handlers = new Map<string, Handler>()
   const ipcMain = {
     handle: (channel: string, listener: Handler) => {
@@ -27,8 +38,8 @@ function setup(): { handlers: Map<string, Handler>; repository: InMemoryBookRepo
     }
   } as unknown as IpcMain
 
-  registerBooksIpc(ipcMain, repository)
-  return { handlers, repository }
+  registerBooksIpc(ipcMain, repository, annotations)
+  return { handlers, repository, annotations }
 }
 
 async function call(handlers: Map<string, Handler>, channel: string, ...args: unknown[]): Promise<unknown> {
@@ -37,6 +48,10 @@ async function call(handlers: Map<string, Handler>, channel: string, ...args: un
   // 用 async 包一层，让同步校验抛出的错误也变成 rejected promise（与 ipcMain.handle 行为一致）
   return await handler({}, ...args)
 }
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('registerBooksIpc', () => {
   it('注册了全部书库频道', () => {
@@ -114,5 +129,70 @@ describe('registerBooksIpc', () => {
     vi.spyOn(repository, 'list').mockRejectedValueOnce(new Error('磁盘炸了'))
 
     await expect(call(handlers, BOOK_CHANNELS.list)).rejects.toThrow('磁盘炸了')
+  })
+})
+
+describe('删书时清理该书的注解', () => {
+  it('先删书、后清注解', async () => {
+    const { handlers, repository, annotations } = setup()
+    const calls: string[] = []
+    const removeBook = repository.remove.bind(repository)
+    const removeByBook = annotations.removeByBook.bind(annotations)
+    vi.spyOn(repository, 'remove').mockImplementation(async (id: string) => {
+      calls.push(`book:${id}`)
+      await removeBook(id)
+    })
+    vi.spyOn(annotations, 'removeByBook').mockImplementation(async (id: string) => {
+      calls.push(`annotations:${id}`)
+      return await removeByBook(id)
+    })
+
+    await call(handlers, BOOK_CHANNELS.save, sampleBook())
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    // 顺序本身就是不变量：反序时删书失败会留下「书还在、划线没了」
+    expect(calls).toEqual(['book:a', 'annotations:a'])
+    await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
+  })
+
+  it('只清这本书的注解，别的书一条不动', async () => {
+    const { handlers, annotations } = setup()
+    await annotations.save(sampleBookmark('a', 'a1'))
+    await annotations.save(sampleBookmark('b', 'b1'))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    await expect(annotations.listByBook('a')).resolves.toEqual([])
+    await expect(annotations.listByBook('b')).resolves.toEqual([sampleBookmark('b', 'b1')])
+  })
+
+  it('注解清不掉时删书仍然算成功，只在控制台留痕', async () => {
+    const { handlers, annotations } = setup()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await call(handlers, BOOK_CHANNELS.save, sampleBook())
+    // 降级启动时注解仓储就是这个行为
+    vi.spyOn(annotations, 'removeByBook').mockRejectedValueOnce(new Error('注解存档本次会话不可用'))
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).resolves.toBeUndefined()
+    await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('注解没能一并清掉'))
+  })
+
+  it('删一本已经不在书库里的书也会清注解，把孤儿注解带走', async () => {
+    const { handlers, annotations } = setup()
+    await annotations.save(sampleBookmark('ghost', 'g1'))
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, 'ghost')).resolves.toBeUndefined()
+    await expect(annotations.listByBook('ghost')).resolves.toEqual([])
+  })
+
+  it('书籍 id 非法时一条数据也不碰', async () => {
+    const { handlers, repository, annotations } = setup()
+    const removeBook = vi.spyOn(repository, 'remove')
+    const removeByBook = vi.spyOn(annotations, 'removeByBook')
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, '   ')).rejects.toThrow('书籍 id 不合法')
+    expect(removeBook).not.toHaveBeenCalled()
+    expect(removeByBook).not.toHaveBeenCalled()
   })
 })
