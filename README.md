@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 17 |
-| 单元/组件测试 | 43 个文件 / **421** 个用例，全通过 |
+| 提交数 | 18 |
+| 单元/组件测试 | 44 个文件 / **461** 个用例，全通过 |
 | 端到端测试 | **8** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -91,7 +91,7 @@ npm install --registry=https://registry.npmmirror.com
 
 ### 明确不做（留给后续版本）
 
-TXT 正文渲染（格式识别已支持，渲染未做）、书签与划线、全文搜索、注释与批注、多标签页、云同步、打包分发。
+TXT 正文渲染（格式识别已支持，渲染未做）、书签与划线的存储与界面（领域模型已落地，见第 6 章）、全文搜索、注释与批注、多标签页、云同步、打包分发。
 
 ---
 
@@ -275,6 +275,25 @@ TOC_LIMITS = { maxEntries: 500, maxDepth: 4 }
   上限是必须的：畸形 EPUB 能造出几万个目录项。
   没有 `href` 的项无法跳转，**但它的子项仍然有效**，所以跳过自身而不是整枝丢弃。
 - `resolveTocTarget` 解决一个真实存在的路径错位：目录里的 `href` 相对**导航文档**，spine 里的 `href` 相对 **OPF**，两者目录不同就对不上号。策略是「先按原样匹配 → 再退回文件名唯一命中 → 都不行就原样返回交给 epub.js 报错」。
+
+### Annotation —— [src/core/domain/annotation.ts](src/core/domain/annotation.ts)
+
+书签与划线共用一个模型：两者都是「书里的一处位置 + 用户附加的信息」，生命周期、存储、列表渲染完全一致，差异只有「有没有选区文本与颜色」。
+
+```ts
+interface AnnotationBase { id; bookId; cfi; chapterHref; percent; note; createdAt; updatedAt }
+BookmarkAnnotation  = AnnotationBase & { kind: 'bookmark' }
+HighlightAnnotation = AnnotationBase & { kind: 'highlight'; excerpt; color }
+Annotation = BookmarkAnnotation | HighlightAnnotation
+```
+
+- **判别联合，而不是「单结构 + 可选字段」**：书签没有 `excerpt` / `color`，用 `kind` 收窄之后 TS 才拦得住「渲染书签时访问 `color`」这类错误。
+- **`cfi` 只以字符串进出 core**，书签是单点（`epubcfi(/6/4!/4/2/2/1:0)`），划线是 range 形式（`epubcfi(/6/4!/4/2,/1:0,/1:10)`）。core 里**不出现 DOM `Range` / `Selection`**：渲染层拿到选区后立刻转成 CFI 字符串再交进来。
+- **刻意不校验 CFI 语法**，只做 trim + 非空 + 上限。CFI 的文本断言（`[pre,post]`）里可以合法出现逗号，「含逗号就是 range」这类判据会误杀合法值；语法权威是 epub.js。
+- **但长度必须限死（`MAX_CFI_LENGTH = 512`），且超长整条拒绝、不许 `slice`**：截断出来的 CFI 语法无效，会造出一个永远定位不到的注解，比直接丢弃更糟。`normalizeCfi` 从 `progress.ts` 复用，注解自己的上限只加在这一侧——改 `progress.ts` 会波及已存进度。
+- **`chapterHref` 比 `toc.ts` 的 `cleanHref` 更严**：它是「存下来下次直接回显」的字段，带 scheme 的绝对 URL（`javascript:` / `data:` / `http:`）一律丢弃。跳转优先用 `cfi`，`href` 只做展示兜底。
+- **`id` 由调用方注入，core 不生成随机 id**：对齐 `now: number = Date.now()` 的可注入约定，单测也就不必去打桩随机源。
+- 与 `reviveBook` / `reviveLocator` 同款：`reviveAnnotation` 对 `id` / `bookId` / `kind` / `cfi` 任一非法就返回 `null`，让调用方只丢弃这一条，而不是让整本书的注解都读不出来。
 
 ---
 
@@ -512,11 +531,11 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（43 文件 / 421 用例）
+### 单元测试地图（44 文件 / 461 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
-| `core/domain` | 6 | 89 | 归一化、复活、排序、进度换算、目录摊平与目标解析 |
+| `core/domain` | 7 | 129 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
 | `core/adapters` | 5 | 60 | 契约测试、JSON 快照分片容错、串行化 |
 | `core/services` | 1 | 13 | 导入编排：去重、坏文件清理、书名兜底 |
@@ -628,7 +647,8 @@ test:e2e = build && playwright test
 | 14 | `93c0ac5` | 收尾 | 覆盖目录跳转与阅读设置落盘的 E2E，fixture 支持 EPUB 3 导航 |
 | 15 | `758309c` | 收尾 | 固定 fixture 的 zip 时间戳，修掉重复导入用例的偶发失败 |
 | 16 | `9b5229b` | 文档 | 补项目总文档 `README.md` |
-| 17 | `—` | 规范 | 添加 `.claude/agents` 子 Agent 定义纳入 Git，用单测守卫格式并在 `AGENTS.md` 里引用 |
+| 17 | `961b881` | 规范 | 添加 `.claude/agents` 子 Agent 定义纳入 Git，用单测守卫格式并在 `AGENTS.md` 里引用 |
+| 18 | `—` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
 
 ### 过程中沉淀下来的经验
 
@@ -656,7 +676,7 @@ test:e2e = build && playwright test
 ### 后续方向
 
 1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线** —— 数据结构上可复用 `ReadingLocator`，存储上扩展 `library.json` 的进度表。
+2. **书签与划线** —— 领域模型已落地（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）。剩下三层：独立端口 + `annotations.json` 仓储（按**书库**策略容错，划线是用户创作的内容，损坏要备份而不是回落）、`annotations:*` IPC、渲染层的选区内高亮与列表。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。
