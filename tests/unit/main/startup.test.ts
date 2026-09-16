@@ -2,13 +2,16 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isCorruptLibraryError } from '@core/adapters/librarySnapshot'
-import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { createBookmark } from '@core/domain/annotation'
 import { createBook } from '@core/domain/book'
 import { ANNOTATIONS_FILE_NAME } from '../../../src/main/storage/annotations'
 import { LIBRARY_FILE_NAME, openLibrary } from '../../../src/main/storage/library'
 import { openStorageForStartup } from '../../../src/main/storage/startup'
+import {
+  ANNOTATIONS_UNAVAILABLE_MESSAGE,
+  UnavailableAnnotationRepository
+} from '../../../src/main/storage/unavailableAnnotationRepository'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const NOW = 1_700_000_000_000
@@ -112,7 +115,7 @@ describe('openStorageForStartup', () => {
     expect(boot.warnings.join('\n')).toContain('注解存档无法读取')
   })
 
-  it('注解文件读不出（不是损坏）时回落内存实现，磁盘上的文件一个字节都不动', async () => {
+  it('注解存档打不开时降级为「写入即失败」，磁盘上的文件一个字节都不动', async () => {
     // 目录占住 annotations.json：readFile 抛 EISDIR，parse 根本没机会跑，
     // 所以这是「打不开」而不是「损坏」，不会走备份，也不能走 Json 仓储
     await mkdir(annotationsPath())
@@ -123,9 +126,15 @@ describe('openStorageForStartup', () => {
     expect(boot.warnings).toHaveLength(1)
     expect(boot.warnings[0]).toContain('注解存档无法打开')
 
-    // 降级后这一个会话仍然读写正常，只是不落盘
-    await boot.annotations.save(sampleAnnotation())
-    await expect(boot.annotations.listByBook('b1')).resolves.toEqual([sampleAnnotation()])
+    // 降级后本次会话的注解功能整体不可用：读不到也写不进。内存实现会在这里 resolve
+    // 并在内存里留下副本，界面于是显示「已保存」而磁盘空白 —— 用户关掉应用才发现全丢
+    expect(boot.annotations).toBeInstanceOf(UnavailableAnnotationRepository)
+    await expect(boot.annotations.save(sampleAnnotation())).rejects.toThrow(ANNOTATIONS_UNAVAILABLE_MESSAGE)
+    await expect(boot.annotations.listByBook('b1')).rejects.toThrow(ANNOTATIONS_UNAVAILABLE_MESSAGE)
+    await expect(boot.annotations.remove('b1', 'a1')).rejects.toThrow(ANNOTATIONS_UNAVAILABLE_MESSAGE)
+    await expect(boot.annotations.removeByBook('b1')).rejects.toThrow(ANNOTATIONS_UNAVAILABLE_MESSAGE)
+    // load() 是唯一保持 resolve 的方法：它不该给启动链引入新的 rejection
+    await expect(boot.annotations.load()).resolves.toBeUndefined()
 
     await expect(readFile(join(annotationsPath(), 'inside.txt'), 'utf8')).resolves.toBe('原有内容')
     await expect(readdir(workDir)).resolves.toEqual([ANNOTATIONS_FILE_NAME])
@@ -169,16 +178,6 @@ describe('openStorageForStartup', () => {
     await expect(boot.library.list()).resolves.toEqual([])
     expect(boot.warnings).toHaveLength(1)
     expect(boot.warnings[0]).toContain('书库无法打开')
-  })
-
-  it('注解被 EISDIR 挡住时也不能因为写不进去而抛错（降级的是内存实现）', async () => {
-    await mkdir(annotationsPath())
-
-    const boot = await openStorageForStartup(workDir, () => NOW)
-
-    expect(boot.annotations).toBeInstanceOf(InMemoryAnnotationRepository)
-    await expect(boot.annotations.removeByBook('b1')).resolves.toBe(0)
-    await expect(boot.library.list()).resolves.toEqual([])
   })
 
   it('书库降级时得到的是内存实现，不会把空书库写回磁盘', async () => {

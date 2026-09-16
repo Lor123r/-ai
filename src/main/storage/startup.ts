@@ -1,9 +1,9 @@
-import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import type { AnnotationRepository } from '@core/ports/annotationRepository'
 import type { BookRepository } from '@core/ports/bookRepository'
 import { openAnnotations, resolveAnnotationsFilePath } from './annotations'
 import { openLibrary, resolveLibraryFilePath } from './library'
+import { UnavailableAnnotationRepository } from './unavailableAnnotationRepository'
 
 export interface StorageBoot {
   library: BookRepository
@@ -24,10 +24,18 @@ function toMessage(error: unknown): string {
  *
  * 「存档损坏」由各自的 open* 处理（改名备份后以空存档启动，仍然读写磁盘）。
  * 这里兜的是它们按设计原样抛出的那一类：路径是目录、权限不足、文件被占用。
- * 此时回落目标必须是**不落盘**的内存实现，不能是同一套 JSON 仓储：JSON 仓储在
- * 读失败之后内部集合是空的，下一次写入会把「空集合 + 新内容」覆盖回磁盘，等于把
- * 用户原有的数据整份抹掉。降级的代价只是「本次会话的改动不保存」，磁盘上那份
- * 文件一个字节都不会动，用户仍有自己抢救的机会。
+ * 此时回落目标既不能是同一套 JSON 仓储，也不能是内存实现：
+ *
+ * - JSON 仓储在读失败之后内部集合是空的，下一次写入会把「空集合 + 新内容」覆盖回
+ *   磁盘，等于把用户原有的数据整份抹掉。
+ * - 内存实现的 save 会 resolve 并在内存里留下副本，界面于是如实显示「已保存」，而
+ *   磁盘上什么都没有；用户关掉应用就丢掉了整个会话的标注，全程没有任何提示。注解
+ *   因此回落 UnavailableAnnotationRepository：四个数据方法一律失败，渲染层立刻就能
+ *   从它本来就有的失败路径报出来。
+ *
+ * 两种回落都保证磁盘上那份文件一个字节都不会动，用户仍有自己抢救的机会。
+ * 书库那条暂且保留内存实现：这是同一类问题，但它的影响面是书架列表而不是阅读界面，
+ * 留给后续单独处理，免得一次改动同时动两套界面行为。
  */
 export async function openStorageForStartup(
   userDataDir: string,
@@ -46,7 +54,7 @@ export async function openStorageForStartup(
     warnings.push(`书库无法打开，本次会话的书架改动不会保存：${toMessage(error)}`)
   }
 
-  let annotations: AnnotationRepository = new InMemoryAnnotationRepository()
+  let annotations: AnnotationRepository = new UnavailableAnnotationRepository()
   try {
     const opened = await openAnnotations(resolveAnnotationsFilePath(userDataDir), now)
     annotations = opened.repository
@@ -54,7 +62,7 @@ export async function openStorageForStartup(
       warnings.push(`注解存档无法读取，本次以空存档启动；备份目标 ${opened.recoveredFiles.join(', ')}`)
     }
   } catch (error) {
-    warnings.push(`注解存档无法打开，本次会话的书签与划线不会保存：${toMessage(error)}`)
+    warnings.push(`注解存档无法打开，本次会话的书签与划线功能不可用：${toMessage(error)}`)
   }
 
   return { library, annotations, warnings }

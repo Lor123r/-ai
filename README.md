@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 23 |
-| 单元/组件测试 | 53 个文件 / **604** 个用例，全通过 |
+| 提交数 | 25 |
+| 单元/组件测试 | 54 个文件 / **607** 个用例，全通过 |
 | 端到端测试 | **10** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -506,9 +506,17 @@ return bridge?.books ?? new InMemoryBookRepository()
 | --- | --- | --- |
 | 正常 / 文件不存在 | 用 JSON 仓储（懒加载） | 落盘 |
 | 存档**损坏** | 由 `openLibrary` / `openAnnotations` 备份改名后以空存档启动 | 落盘（写的是新文件） |
-| 存档**打不开**（路径被目录占住、权限不足、被占用） | **回落内存实现**，记一条 `console.warn` | **不落盘** |
+| 存档**打不开**（路径被目录占住、权限不足、被占用） | 书库回落内存实现；注解回落 `UnavailableAnnotationRepository`（四个数据方法一律失败）。各自记一条 `console.warn` | **不落盘** |
 
-第三档为什么必须是内存实现，而不是「拿同一套 JSON 仓储再试一次」：那个仓储刚在 `openAnnotations` / `openLibrary` 里连 `load()` 都没走通，`loaded` 永远停在 `false`，接下来的每一次读写都会重新抛同一个异常——等于整场会话的注解功能全废，用户点一次书签弹一次错，没有任何自救余地。内存实现至少让这一场会话读得动、写得进，代价只是改动不保存，而磁盘上那份文件一个字节都不会动（[startup.test.ts](tests/unit/main/startup.test.ts) 逐字节钉住了这一点）。
+第三档为什么不能是「拿同一套 JSON 仓储再试一次」：那个仓储刚在 `openAnnotations` / `openLibrary` 里连 `load()` 都没走通，`loaded` 永远停在 `false`，接下来的每一次读写都会重新抛同一个异常——等于整场会话的功能全废。这一条只解决了「不抛错」，没有解决「用户以为存下来了」。
+
+于是注解这一半改用 [UnavailableAnnotationRepository](src/main/storage/unavailableAnnotationRepository.ts)：**四个数据方法一律 reject**，`load()` 是唯一保持 resolve 的方法（它在桥接实现里本来就是空操作，且在启动链上没有调用方，不该给启动链引入一个可能被忽略的 rejection）。原因是内存实现留下了一条真正危险的路径：它的 `save` 会 resolve 并在内存里留下副本，于是渲染层的乐观更新一路走通、界面如实显示「已保存」，而磁盘上什么都没有——用户关掉应用就丢掉了整个会话的标注，全程没有任何提示。这是唯一一条「界面说存了、磁盘没有」的真实路径，**渲染层权限内没有任何办法察觉到它**，只能由主进程在源头把写入变成明确失败。
+
+读也一起失败是有意为之：`listByBook` 返回空数组会让界面宣称「这本书还没有注解」，那同样是假话（磁盘上可能正躺着一份读不出来的存档），还会把用户引向「重新标一遍」，可重新标一样会失败。四方法装死之后，整个功能一致地表现为「本次会话用不了」，渲染层只要走它本来就有的失败与回滚路径即可。
+
+书库那一半**暂且保留内存实现**：这是同一类问题（`InMemoryBookRepository.save` 同样会 resolve），但它的影响面是书架列表而不是阅读界面，留给后续单独处理，免得一次改动同时动两套界面行为。
+
+两种回落都保证磁盘上那份文件一个字节都不会动（[startup.test.ts](tests/unit/main/startup.test.ts) 逐字节钉住了这一点）。
 
 两个存档**各自独立降级**：注解读不出来不影响书库落盘，反之亦然。降级不是静默的，每条都会在控制台留下能区分「书库」和「注解」的警告。
 
@@ -567,7 +575,7 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（53 文件 / 604 用例）
+### 单元测试地图（54 文件 / 607 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
@@ -575,7 +583,7 @@ return ePub(copy.buffer)
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
 | `core/adapters` | 8 | 129 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写、`dropped` 的合并语义 |
 | `core/services` | 1 | 13 | 导入编排：去重、坏文件清理、书名兜底 |
-| `main` | 9 | 114 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级、文件落盘与越界防护、设置存储 |
+| `main` | 10 | 117 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、文件落盘与越界防护、设置存储 |
 | `renderer/data` | 5 | 14 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 拒绝 |
 | `renderer/reader` | 10 | 97 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互、注解 id 的三档降级 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
@@ -698,7 +706,8 @@ test:e2e = build && playwright test
 | 21 | `f996cfe` | 文档 | 回填迭代历程第 20 行的提交号 |
 | 22 | `8fe071f` | 功能 | 注解 id 的三档降级与 E2E 探针；`remove` 对齐「零改动零写盘」 |
 | 23 | `07eeab4` | 文档 | 写明 `dropped` 是三种原因的合并计数，并用单测钉住 |
-| 24 | `—` | 功能 | 接通注解 IPC 与启动兜底：`annotations:*` 频道、`AnnotationRepository` 适配器与 Provider、启动期降级到内存实现、R4 窗口起不来一并堵住 |
+| 24 | `cb4e85f` | 功能 | 接通注解 IPC 与启动兜底：`annotations:*` 频道、`AnnotationRepository` 适配器与 Provider、启动期降级到内存实现、R4 窗口起不来一并堵住 |
+| 25 | `—` | 修复 | 注解的启动降级改为「写入即失败」：新增 `UnavailableAnnotationRepository`，不再回落到会 resolve 的内存实现 |
 
 ### 过程中沉淀下来的经验
 
@@ -726,7 +735,7 @@ test:e2e = build && playwright test
 ### 后续方向
 
 1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线** —— 领域模型（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）与存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）都已落地，但**还没有生产调用方**。id 的生成已经备好（[annotationId.ts](src/renderer/src/reader/annotationId.ts)，三档降级），E2E 探针也确认了生产环境走的是第一档，但**它同样没有被任何界面调用**。剩下两层：`annotations:*` IPC（三处同步）、渲染层的选区内高亮与列表。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+2. **书签与划线** —— 领域模型（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）与 `annotations:*` IPC / 渲染层适配器都已落地，但**还没有任何界面调用方**。id 的生成已经备好（[annotationId.ts](src/renderer/src/reader/annotationId.ts)，三档降级），E2E 探针也确认了生产环境走的是第一档，但**它同样没有被任何界面调用**。剩下的是渲染层本身：选区取词转 CFI、划线的增删、书签与注解列表。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。
