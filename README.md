@@ -32,9 +32,9 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 20 |
-| 单元/组件测试 | 48 个文件 / **529** 个用例，全通过 |
-| 端到端测试 | **8** 条 Playwright + Electron 用例，全通过 |
+| 提交数 | 21 |
+| 单元/组件测试 | 49 个文件 / **539** 个用例，全通过 |
+| 端到端测试 | **9** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
 
@@ -182,7 +182,7 @@ src/
     data/               #   Provider + 工厂函数（决定用 IPC 还是内存实现）
     hooks/useBooks.ts   #   书架数据流
     shelf/              #   书架与封面
-    reader/             #   阅读器、目录、设置、epub.js 适配
+    reader/             #   阅读器、目录、设置、epub.js 适配、注解 id 生成
     styles/global.css   #   主题变量与全部样式
 tests/
   unit/                 # 与 src 同构分层的单元测试
@@ -292,7 +292,7 @@ Annotation = BookmarkAnnotation | HighlightAnnotation
 - **刻意不校验 CFI 语法**，只做 trim + 非空 + 上限。CFI 的文本断言（`[pre,post]`）里可以合法出现逗号，「含逗号就是 range」这类判据会误杀合法值；语法权威是 epub.js。
 - **但长度必须限死（`MAX_CFI_LENGTH = 512`），且超长整条拒绝、不许 `slice`**：截断出来的 CFI 语法无效，会造出一个永远定位不到的注解，比直接丢弃更糟。`normalizeCfi` 从 `progress.ts` 复用，注解自己的上限只加在这一侧——改 `progress.ts` 会波及已存进度。
 - **`chapterHref` 比 `toc.ts` 的 `cleanHref` 更严**：它是「存下来下次直接回显」的字段，带 scheme 的绝对 URL（`javascript:` / `data:` / `http:`）一律丢弃。跳转优先用 `cfi`，`href` 只做展示兜底。
-- **`id` 由渲染层生成，主进程只校验**：调用方注入 `crypto.randomUUID()`，core 不生成随机 id（对齐 `now: number = Date.now()` 的可注入约定，单测也不必打桩随机源）。渲染层为了做乐观更新不等 IPC 往返，所以这条 id 到主进程时已经在信任边界之外。**但 core 不强制 UUID 形状**，只限死「长度 ≤ 128 + 字符集 `[A-Za-z0-9_-]`」：把 id 钉成 UUID 就等于堵死渲染层在 `randomUUID` 不可用时的回落方案，而真正要防的控制字符、空白、路径分隔符与引号，白名单已经全覆盖。`bookId` 同样限长，`MAX_ANNOTATIONS_PER_BOOK = 1000` 拦住无界增长。
+- **`id` 由渲染层生成，主进程只校验**：调用方注入 `crypto.randomUUID()`，core 不生成随机 id（对齐 `now: number = Date.now()` 的可注入约定，单测也不必打桩随机源）。渲染层为了做乐观更新不等 IPC 往返，所以这条 id 到主进程时已经在信任边界之外。**但 core 不强制 UUID 形状**，只限死「长度 ≤ 128 + 字符集 `[A-Za-z0-9_-]`」：把 id 钉成 UUID 就等于堵死渲染层在 `randomUUID` 不可用时的回落方案，而真正要防的控制字符、空白、路径分隔符与引号，白名单已经全覆盖。`bookId` 同样限长，`MAX_ANNOTATIONS_PER_BOOK = 1000` 拦住无界增长。回落方案不是纸上预案：[annotationId.ts](src/renderer/src/reader/annotationId.ts) 已经把它落成代码，三档依次降级——`crypto.randomUUID()` → `crypto.getRandomValues()`（`randomUUID` 是安全上下文限定接口，`getRandomValues` 不是，所以这一档正好接得上）→ `Math.random()`。三档都必须随机，**不能退到递增计数器**：同一个 `(bookId, id)` 在存档里是覆盖语义，计数器在「重装 / 换设备 / 清空存档」之后一定会从同一个起点重新走一遍，两条注解会悄悄合成一条。E2E 实测（第 11 章）确认生产环境走的是第一档。
 - **`reviveAnnotation` 走的是同一套校验，不是另一套**：与 `reviveBook` / `reviveLocator` 同款，`id` / `bookId` / `kind` / `cfi` 任一非法就返回 `null`，让调用方只丢弃这一条，而不是让整本书的注解都读不出来。id 会被重放，所以复活时长度与字符集要**重新**校验，不能只判非空。
 
 ---
@@ -468,6 +468,8 @@ return bridge?.books ?? new InMemoryBookRepository()
 
 **注解为什么不进 `library.json`**：`library.json` 是「每本书一个进度值」的表，而注解是集合。混在一起会让每次翻页保存进度都得重写全部划线，而且一份坏掉的划线会连带把书库一起判为损坏。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。这两条存档的恢复流程**刻意各写一份**，不复用：[annotations.ts](src/main/storage/annotations.ts) 的备份路径只从传入的 `filePath` 派生，**不硬编码文件名**；且它只认 `AnnotationCorruptError`，遇到 `LibraryCorruptError` 或 IO 失败一律原样抛出，绝不会把书库的损坏当成注解损坏去备份。这条隔离由 [annotationStorageIsolation.test.ts](tests/unit/repo/annotationStorageIsolation.test.ts) 双向钉住（`annotations.ts` 不含 `/library/i`，`library.ts` 不含 `/annotation/i`）。
 
+仓储层另有一条写盘约定：`remove` 删一个不存在的 id、`removeByBook` 一条都没删到，都**不落盘**。删除是幂等的，重试不该把存档文件的修改时间反复刷新，也不该因为删掉一本没有注解的书就凭空造出一个空存档文件；`save` 是 upsert，命中同一条就是真的改内容，照常写。
+
 数据目录由 `app.getPath('userData')` 决定，可用环境变量 `EBOOK_READER_USER_DATA` 覆盖。
 
 ### 写盘：先临时文件再改名
@@ -539,17 +541,17 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（48 文件 / 529 用例）
+### 单元测试地图（49 文件 / 539 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
 | `core/domain` | 7 | 142 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
-| `core/adapters` | 7 | 97 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写 |
+| `core/adapters` | 7 | 99 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写 |
 | `core/services` | 1 | 13 | 导入编排：去重、坏文件清理、书名兜底 |
 | `main` | 7 | 84 | IPC 入参校验、书库与注解的恢复流程、文件落盘与越界防护、设置存储 |
 | `renderer/data` | 4 | 9 | 有无 IPC 桥时的实现选择 |
-| `renderer/reader` | 9 | 89 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互 |
+| `renderer/reader` | 10 | 97 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互、注解 id 的三档降级 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
@@ -567,7 +569,7 @@ return ePub(copy.buffer)
 
 它还必须**字节确定**：生成前把所有 zip 条目的时间戳统一盖成 `FIXTURE_DATE`。JSZip 默认给每个条目盖当前时间，而 zip 的 DOS 时间戳只有 2 秒精度，同一份 fixture 生成两次就会得到不同字节，一切按内容哈希判等的断言都会随机失败。注意 `zip.file` 的 `date` 选项只作用于显式添加的文件，JSZip 隐式补出的目录条目（`META-INF/`、`OEBPS/`）仍取当前时间，所以固定动作统一放在生成那一步，并由单测钉住。
 
-### 端到端测试（8 条）
+### 端到端测试（9 条）
 
 | # | 用例 | 验证的核心契约 |
 | --- | --- | --- |
@@ -579,12 +581,15 @@ return ePub(copy.buffer)
 | 6 | 重复导入同一本书会被跳过而不是复制第二份 | 内容级去重 |
 | 7 | 目录会列出章节，点击条目后正文跳到对应章节 | 嵌套目录渲染 + 跳转确实换章 |
 | 8 | 阅读设置会落盘，重开应用后依然生效 | 设置作用到书内样式 + 节流落盘 + 重启恢复 |
+| 9 | 渲染进程的 WebCrypto 满足注解 id 生成的降级假设 | `file://` 主框架是安全上下文、`randomUUID` 与 `getRandomValues` 都在、产出的 id 落在 core 白名单内 |
 
 E2E 基础设施的三个要点：
 
 1. **每个用例用独立的临时数据目录**（`mkdtemp` + `EBOOK_READER_USER_DATA`），互不干扰且不污染真实书库。
 2. **原生文件选择框无法自动化**，所以在主进程里替换 `dialog.showOpenDialog` 的返回值。
 3. **正文在 iframe 里**，且转场期间新旧两章会同时存在，所以收集正文时要遍历全部非主 frame 并 join；断言字号则读 `body` 的内联 `style`。
+
+第 9 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
 
 ### 关于 `npm run verify`
 
@@ -663,6 +668,7 @@ test:e2e = build && playwright test
 | 18 | `338c2bf` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
 | 19 | `09df618` | 规范 | 收窄子 Agent 能力边界：删掉 `tools:` 里的执行能力、声明无命令权限、用单测钉住 |
 | 20 | `206253d` | 功能 | 书签与划线的存档层：`AnnotationCorruptError`、`annotations.json` 快照、JSON 仓储、独立于书库的恢复流程 |
+| 21 | `—` | 功能 | 注解 id 生成的三档降级与 E2E 探针；`remove` 对齐「零改动零写盘」 |
 
 ### 过程中沉淀下来的经验
 
@@ -690,7 +696,7 @@ test:e2e = build && playwright test
 ### 后续方向
 
 1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线** —— 领域模型（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）与存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）都已落地，但**还没有生产调用方**。剩下两层：`annotations:*` IPC（三处同步）、渲染层的选区内高亮与列表。接线时还要补一件事：`id` 的生成依赖渲染进程的 `crypto.randomUUID()`，而 jsdom 里这个函数来自 Node 泄进全局的 webcrypto，**与真实渲染进程的安全上下文不是一回事**，需要 E2E 实测；不可用时得启用白名单允许的回落方案。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+2. **书签与划线** —— 领域模型（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）与存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）都已落地，但**还没有生产调用方**。id 的生成已经备好（[annotationId.ts](src/renderer/src/reader/annotationId.ts)，三档降级），E2E 探针也确认了生产环境走的是第一档，但**它同样没有被任何界面调用**。剩下两层：`annotations:*` IPC（三处同步）、渲染层的选区内高亮与列表。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。

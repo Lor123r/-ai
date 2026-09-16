@@ -153,6 +153,35 @@ describe('JsonAnnotationRepository 持久化', () => {
     await expect(repo.removeByBook('b1')).resolves.toBe(0)
   })
 
+  it('remove 删一个不存在的 id 时完全不写盘', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonAnnotationRepository(store)
+
+    await expect(repo.remove('b1', '不存在')).resolves.toBeUndefined()
+    expect(store.writes).toEqual([])
+    expect(store.current).toBeNull()
+
+    await repo.save(bookmark('a1'))
+    const writesAfterSave = store.writes.length
+    // 删第二次（此时已经不在了）同样不该写盘
+    await repo.remove('b1', 'a1')
+    await repo.remove('b1', 'a1')
+    expect(store.writes).toHaveLength(writesAfterSave + 1)
+  })
+
+  it('remove 命中的那一次仍然照常落盘', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonAnnotationRepository(store)
+    await repo.save(bookmark('a1'))
+    await repo.save(bookmark('a2', NOW - 10))
+
+    await repo.remove('b1', 'a1')
+
+    await expect(new JsonAnnotationRepository(store).listByBook('b1')).resolves.toEqual([
+      bookmark('a2', NOW - 10)
+    ])
+  })
+
   it('removeByBook 没有任何改动时完全不写盘', async () => {
     const store = new InMemoryTextStore()
     const repo = new JsonAnnotationRepository(store)

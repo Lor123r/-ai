@@ -55,7 +55,11 @@ export class JsonAnnotationRepository implements AnnotationRepository {
   async remove(bookId: string, annotationId: string): Promise<void> {
     await this.runExclusive(async () => {
       await this.ensureLoaded()
-      this.annotations.delete(storageKey(bookId, annotationId))
+
+      // 和 removeByBook 一致：没有任何改动就不写盘。删除是幂等的，重试或删除一个
+      // 已经被删掉的 id 都会走到这里，无谓的写盘会让存档文件的修改时间不断被刷新。
+      if (!this.annotations.delete(storageKey(bookId, annotationId))) return
+
       await this.flush()
     })
   }

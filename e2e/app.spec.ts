@@ -461,3 +461,58 @@ test('阅读设置会落盘，重开应用后依然生效', async () => {
     await rm(userDataDir, { recursive: true, force: true })
   }
 })
+
+/** 只在渲染进程里成立的全局；主进程工程没有 DOM lib，所以在这里自己声明。 */
+interface RendererCryptoScope {
+  isSecureContext?: boolean
+  crypto?: {
+    randomUUID?: () => string
+    getRandomValues?: (array: Uint8Array) => Uint8Array
+  }
+}
+
+test('渲染进程的 WebCrypto 满足注解 id 生成的降级假设', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+
+      const probe = await page.evaluate(() => {
+        const scope = globalThis as unknown as RendererCryptoScope
+        const webCrypto = scope.crypto
+        const randomUUID = webCrypto === undefined ? undefined : webCrypto.randomUUID
+        const hasRandomUUID = typeof randomUUID === 'function'
+        const ids: string[] = []
+        if (webCrypto !== undefined && hasRandomUUID) {
+          for (let index = 0; index < 200; index += 1) ids.push(webCrypto.randomUUID!())
+        }
+        return {
+          isSecureContext: scope.isSecureContext === true,
+          hasRandomUUID,
+          hasGetRandomValues: webCrypto !== undefined && typeof webCrypto.getRandomValues === 'function',
+          ids
+        }
+      })
+
+      // 生产环境用 file:// 加载页面，Chromium 把 file:// 视作可信来源，所以这里是安全上下文，
+      // randomUUID 这一档就是真实生产路径。若哪天它变成 false，说明第一档已经失效。
+      expect(probe.isSecureContext).toBe(true)
+      expect(probe.hasRandomUUID).toBe(true)
+      // getRandomValues 不受安全上下文限制，所以 randomUUID 万一被挡住，第二档仍然接得上。
+      expect(probe.hasGetRandomValues).toBe(true)
+
+      // 渲染层产出的 id 必须落进主进程的白名单：长度 ≤ 128、字符集 [A-Za-z0-9_-]。
+      expect(probe.ids).toHaveLength(200)
+      for (const id of probe.ids) expect(id).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
+      expect(new Set(probe.ids).size).toBe(200)
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
