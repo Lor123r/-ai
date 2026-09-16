@@ -36,10 +36,14 @@ npm run verify
 
 | 定义 | 用途 |
 | --- | --- |
-| [verify-runner.md](./.claude/agents/verify-runner.md) | 跑验证命令并按约定汇报结果（只跑不改） |
+| [verify-runner.md](./.claude/agents/verify-runner.md) | 拟出验证命令与判定标准，交人类执行（只读，不跑命令） |
 | [layering-guard.md](./.claude/agents/layering-guard.md) | 审查改动是否破坏分层与安全边界（只读） |
-| [test-author.md](./.claude/agents/test-author.md) | 按本仓库约定补测试、修测试确定性 |
-| [commit-crafter.md](./.claude/agents/commit-crafter.md) | 按规范生成 Git 提交信息 |
+| [test-author.md](./.claude/agents/test-author.md) | 按本仓库约定补测试、修测试确定性（只写文件，不跑命令） |
+| [commit-crafter.md](./.claude/agents/commit-crafter.md) | 起草提交信息与提交命令，交人类执行（只读，不提交） |
 
 这些定义的格式由 [tests/unit/repo/agentDefinitions.test.ts](./tests/unit/repo/agentDefinitions.test.ts) 守卫：
 文件名必须是 kebab-case、`name` 必须与文件名一致、必须有 `description`，并且每个定义都要在本文件里被引用。
+
+**这些子 Agent 都没有命令执行权限。** 它们只产出文件与「给人类执行的命令清单」，
+跑命令、验证绿灯、真正提交这三件事一律由人类（或主 Agent 代跑）完成。
+凡是把 `Bash` 之类执行能力写进 `tools:` 的定义都会被判红。

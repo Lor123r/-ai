@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 18 |
-| 单元/组件测试 | 44 个文件 / **461** 个用例，全通过 |
+| 提交数 | 19 |
+| 单元/组件测试 | 44 个文件 / **463** 个用例，全通过 |
 | 端到端测试 | **8** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -545,7 +545,7 @@ return ePub(copy.buffer)
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
-| `tests/unit/repo` | 1 | 5 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用 |
+| `tests/unit/repo` | 1 | 7 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力 |
 
 `tests/unit/reader/ReaderView.test.tsx`（31 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」这类交互。
 
@@ -608,14 +608,18 @@ test:e2e = build && playwright test
 
 | 定义 | 用途 |
 | --- | --- |
-| [verify-runner.md](.claude/agents/verify-runner.md) | 跑验证命令并按约定汇报结果（只跑不改） |
+| [verify-runner.md](.claude/agents/verify-runner.md) | 拟出验证命令与判定标准，交人类执行（只读，不跑命令） |
 | [layering-guard.md](.claude/agents/layering-guard.md) | 审查改动是否破坏分层与安全边界（只读） |
-| [test-author.md](.claude/agents/test-author.md) | 按本仓库约定补测试、修测试确定性 |
-| [commit-crafter.md](.claude/agents/commit-crafter.md) | 按规范生成 Git 提交信息 |
+| [test-author.md](.claude/agents/test-author.md) | 按本仓库约定补测试、修测试确定性（只写文件，不跑命令） |
+| [commit-crafter.md](.claude/agents/commit-crafter.md) | 起草提交信息与提交命令，交人类执行（只读，不提交） |
 
-写这些定义时踩到一个反直觉的点：**`import.meta.url` 在 vitest 里只有测试回调内联读到的那次是本文件路径**，在模块作用域或辅助函数里读到的是错值，而且不报错。所以守护测试用 `process.cwd()` 定位仓库根。
+**这四个定义都没有命令执行权限。** 它们只产出文件与「给人类执行的命令清单」，跑命令、验证绿灯、真正提交三件事一律由人类或主 Agent 完成。
 
-这些定义的格式由 [tests/unit/repo/agentDefinitions.test.ts](tests/unit/repo/agentDefinitions.test.ts) 守卫：文件名必须是 kebab-case、`name` 必须与文件名一致、必须有 `description`，并且每个定义都要在 `AGENTS.md` 里被引用。**格式错的子 Agent 定义不会被任何工具报出来，只会静默不生效**，所以必须用测试钉住。
+这不是洁癖，是踩出来的：具名子 Agent 拿不到 shell，而定义里写着 `tools: ... Bash` 时，流程中的「跑 `npm run verify`」「`git commit`」看起来是步骤，实际根本无法执行——它只会产出一份「测试全绿」的汇报，而那个绿是编出来的。**最危险的幻觉不是做错，是声称做过。** 所以现在的定义里明确写了「你没有执行命令的权限，必须输出命令给人类审核」，并且用测试钉住。
+
+写这些定义时还踩到一个反直觉的点：**`import.meta.url` 在 vitest 里只有测试回调内联读到的那次是本文件路径**，在模块作用域或辅助函数里读到的是错值，而且不报错。所以守护测试用 `process.cwd()` 定位仓库根。
+
+这些定义的格式由 [tests/unit/repo/agentDefinitions.test.ts](tests/unit/repo/agentDefinitions.test.ts) 守卫：文件名必须是 kebab-case、`name` 必须与文件名一致、必须有 `description`、每个定义都要在 `AGENTS.md` 里被引用、`tools:` 里不含任何命令执行能力、正文必须声明自己没有命令执行权限。**格式错的子 Agent 定义不会被任何工具报出来，只会静默不生效**，所以必须用测试钉住。
 
 ### Windows / PowerShell 环境注意
 
@@ -648,7 +652,8 @@ test:e2e = build && playwright test
 | 15 | `758309c` | 收尾 | 固定 fixture 的 zip 时间戳，修掉重复导入用例的偶发失败 |
 | 16 | `9b5229b` | 文档 | 补项目总文档 `README.md` |
 | 17 | `961b881` | 规范 | 添加 `.claude/agents` 子 Agent 定义纳入 Git，用单测守卫格式并在 `AGENTS.md` 里引用 |
-| 18 | `—` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
+| 18 | `338c2bf` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
+| 19 | `—` | 规范 | 收窄子 Agent 能力边界：删掉 `tools:` 里的执行能力、声明无命令权限、用单测钉住 |
 
 ### 过程中沉淀下来的经验
 
