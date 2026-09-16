@@ -13,6 +13,7 @@ import {
   type Annotation
 } from '@core/domain/annotation'
 import type { TextStore } from '@core/ports/textStore'
+import { describeAnnotationRepositoryContract } from '../contracts/annotationRepositoryContract'
 
 const NOW = 1_700_000_000_000
 
@@ -54,6 +55,13 @@ function fullSnapshot(count = MAX_ANNOTATIONS_PER_BOOK, bookId = 'b1'): string {
     Array.from({ length: count }, (_, index) => bookmark(`a${index}`, NOW - index, bookId))
   )
 }
+
+// 与 InMemoryAnnotationRepository 跑同一份契约：内存实现只是替身，
+// 它一旦与落盘实现漂移，就会变成「单测全绿、装上应用才丢数据」
+describeAnnotationRepositoryContract(
+  'JsonAnnotationRepository',
+  () => new JsonAnnotationRepository(new InMemoryTextStore())
+)
 
 describe('JsonAnnotationRepository 持久化', () => {
   it('第一次操作时才真正读盘，之后再读也用内存状态', async () => {

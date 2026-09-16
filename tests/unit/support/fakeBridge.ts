@@ -1,5 +1,7 @@
+import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepository'
+import type { AnnotationRepository } from '@core/ports/annotationRepository'
 import type { BookCover, CoverReader } from '@core/ports/bookCover'
 import type { BookContentReader } from '@core/ports/bookContent'
 import type { BookImporter } from '@core/ports/bookImporter'
@@ -38,6 +40,11 @@ export function createFakeSettingsRepository(): SettingsRepository {
   return new InMemorySettingsRepository()
 }
 
+/** 默认注解仓库是全新的内存实现（等同这本书还没有书签与划线）。 */
+export function createFakeAnnotationRepository(): AnnotationRepository {
+  return new InMemoryAnnotationRepository()
+}
+
 /** 造一个完整的 preload 桥，避免每个测试自己拼一份不完整的对象。 */
 export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): AppBridge {
   return {
@@ -46,7 +53,8 @@ export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): 
     library: createFakeImporter(),
     cover: createFakeCoverReader(),
     content: createFakeContentReader(),
-    settings: createFakeSettingsRepository()
+    settings: createFakeSettingsRepository(),
+    annotations: createFakeAnnotationRepository()
   }
 }
 

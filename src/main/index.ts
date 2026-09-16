@@ -1,11 +1,12 @@
 import { join } from 'node:path'
 import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
+import { registerAnnotationsIpc } from './ipc/annotationsIpc'
 import { registerBooksIpc } from './ipc/booksIpc'
 import { registerLibraryIpc } from './ipc/libraryIpc'
 import { registerSettingsIpc } from './ipc/settingsIpc'
 import { FileBookStore } from './import/fileBookStore'
-import { openLibrary, resolveLibraryFilePath } from './storage/library'
 import { openSettings, resolveSettingsFilePath } from './storage/settings'
+import { openStorageForStartup } from './storage/startup'
 
 const isDev = !app.isPackaged
 
@@ -53,17 +54,17 @@ function createWindow(): BrowserWindow {
   return mainWindow
 }
 
-void app.whenReady().then(async () => {
+async function startApplication(): Promise<void> {
   const userDataDir = app.getPath('userData')
-  const { repository, recoveredFiles } = await openLibrary(resolveLibraryFilePath(userDataDir))
-  if (recoveredFiles.length > 0) {
-    console.warn('[library] 原书库文件无法读取，已备份为：', recoveredFiles.join(', '))
-  }
+  const storage = await openStorageForStartup(userDataDir)
+  // 降级启动与「救回来」的启动都必须留痕，否则用户只会看到书架空了、划线没了
+  for (const warning of storage.warnings) console.warn('[storage]', warning)
 
-  registerBooksIpc(ipcMain, repository)
+  registerBooksIpc(ipcMain, storage.library)
+  registerAnnotationsIpc(ipcMain, storage.annotations)
   registerSettingsIpc(ipcMain, openSettings(resolveSettingsFilePath(userDataDir)))
   registerLibraryIpc(ipcMain, {
-    repository,
+    repository: storage.library,
     fileStore: new FileBookStore({ userDataDir }),
     dialog,
     getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
@@ -73,7 +74,20 @@ void app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-})
+}
+
+/**
+ * 最后一道兜底。走到这里说明启动链自己出了问题（注册 IPC、建窗口失败），
+ * 已经没有可降级的余地；那就宁可弹一个看得懂的框再退出，
+ * 也不要留下一个没有窗口、用户也杀不掉的进程。
+ */
+function reportFatalStartupError(error: unknown): void {
+  console.error('[startup] 启动失败', error)
+  dialog.showErrorBox('电纸书阅读器启动失败', error instanceof Error ? error.message : String(error))
+  app.quit()
+}
+
+void app.whenReady().then(startApplication).catch(reportFatalStartupError)
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

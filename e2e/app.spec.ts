@@ -23,6 +23,11 @@ interface BridgeWindow {
       list(): Promise<{ id: string }[]>
       getLocator(bookId: string): Promise<{ percent: number } | null>
     }
+    annotations: {
+      listByBook(bookId: string): Promise<unknown[]>
+      save(annotation: unknown): Promise<void>
+      remove(bookId: string, annotationId: string): Promise<void>
+    }
   }
 }
 
@@ -48,6 +53,28 @@ async function seedBook(page: Page, id: string, title: string): Promise<void> {
         lastOpenedAt: null
       }),
     { bookId: id, bookTitle: title }
+  )
+}
+
+/** 一条字段齐全的书签，用于验证注解走完整条 IPC 链路。 */
+function sampleAnnotation(bookId: string) {
+  return {
+    id: 'a1',
+    bookId,
+    kind: 'bookmark',
+    cfi: 'epubcfi(/6/4!/4/2)',
+    chapterHref: 'ch1.xhtml',
+    percent: 0.25,
+    note: '端到端笔记',
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000
+  }
+}
+
+async function saveAnnotation(page: Page, bookId: string): Promise<void> {
+  await page.evaluate(
+    (annotation) => (globalThis as unknown as BridgeWindow).api!.annotations.save(annotation),
+    sampleAnnotation(bookId)
   )
 }
 
@@ -100,6 +127,64 @@ test('通过 IPC 保存的书籍会落盘，并在重启后重新出现在书架
 
       await expect(page.getByRole('heading', { name: '持久化样书' })).toBeVisible()
       await expect(page.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toHaveCount(0)
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('通过 IPC 保存的注解会落盘，重启后仍然读得到', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const annotationsPath = join(userDataDir, 'annotations.json')
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+
+      await saveAnnotation(page, 'book-1')
+
+      // 渲染层递来的数据在信任边界之外：非法 id 必须被主进程挡下，不许写进存档
+      const rejected = await page.evaluate(async () => {
+        try {
+          await (globalThis as unknown as BridgeWindow).api!.annotations.save({
+            id: 'a 1',
+            bookId: 'book-1',
+            kind: 'bookmark',
+            cfi: 'epubcfi(/6/4!/4/2)'
+          })
+          return false
+        } catch {
+          return true
+        }
+      })
+      expect(rejected).toBe(true)
+
+      // 删一个不存在的 id 是幂等的，不该 reject
+      await page.evaluate(() =>
+        (globalThis as unknown as BridgeWindow).api!.annotations.remove('book-1', 'ghost')
+      )
+
+      const text = await readFile(annotationsPath, 'utf8')
+      expect(text).toContain('a1')
+      expect(text).not.toContain('a 1')
+      expect(JSON.parse(text)).toMatchObject({ version: 1 })
+    } finally {
+      await first.close()
+    }
+
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+
+      const annotations = await page.evaluate((bookId) =>
+        (globalThis as unknown as BridgeWindow).api!.annotations.listByBook(bookId)
+      , 'book-1')
+      expect(annotations).toEqual([sampleAnnotation('book-1')])
     } finally {
       await second.close()
     }

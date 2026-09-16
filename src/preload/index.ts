@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AppBridge } from '@shared/ipc'
-import { BOOK_CHANNELS, LIBRARY_CHANNELS, SETTINGS_CHANNELS } from '@shared/ipc'
+import { ANNOTATION_CHANNELS, BOOK_CHANNELS, LIBRARY_CHANNELS, SETTINGS_CHANNELS } from '@shared/ipc'
 
 const api: AppBridge = {
   versions: {
@@ -16,6 +16,11 @@ const api: AppBridge = {
     getLocator: (bookId) => ipcRenderer.invoke(BOOK_CHANNELS.getLocator, bookId),
     saveLocator: (bookId, locator) => ipcRenderer.invoke(BOOK_CHANNELS.saveLocator, bookId, locator),
     markOpened: (id, openedAt) => ipcRenderer.invoke(BOOK_CHANNELS.markOpened, id, openedAt)
+  },
+  annotations: {
+    listByBook: (bookId) => ipcRenderer.invoke(ANNOTATION_CHANNELS.list, bookId),
+    save: (annotation) => ipcRenderer.invoke(ANNOTATION_CHANNELS.save, annotation),
+    remove: (bookId, annotationId) => ipcRenderer.invoke(ANNOTATION_CHANNELS.remove, bookId, annotationId)
   },
   library: {
     pickAndImport: () => ipcRenderer.invoke(LIBRARY_CHANNELS.import)

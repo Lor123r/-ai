@@ -33,8 +33,8 @@
 | 指标 | 数值 |
 | --- | --- |
 | 提交数 | 23 |
-| 单元/组件测试 | 49 个文件 / **541** 个用例，全通过 |
-| 端到端测试 | **9** 条 Playwright + Electron 用例，全通过 |
+| 单元/组件测试 | 53 个文件 / **604** 个用例，全通过 |
+| 端到端测试 | **10** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
 
@@ -435,10 +435,18 @@ flowchart TB
 | | `library:read-content` | `bookId` | `Uint8Array \| null` |
 | `settings` | `settings:load` | — | `ReaderSettings` |
 | | `settings:save` | `ReaderSettings` | `void` |
+| `annotations` | `annotations:list` | `bookId` | `Annotation[]` |
+| | `annotations:save` | `Annotation` | `void` |
+| | `annotations:remove` | `bookId`, `annotationId` | `void` |
 
-**协议层的职责是校验，不是转发。** 所有 handler 先跑一遍 `reviveBook` / `reviveLocator` / 类型检查，非法数据直接抛错，绝不写进用户书库。
+**协议层的职责是校验，不是转发。** 所有 handler 先跑一遍 `reviveBook` / `reviveLocator` / `reviveAnnotation` / 类型检查，非法数据直接抛错，绝不写进用户书库。
 
-> 注解存档层（第 9 章）当前**没有出现在这张表里**：`openAnnotations` 只有单测调用，启动期尚未接线，`annotations:*` 频道也还没加。新增频道时必须三处同步（[src/shared/ipc.ts](src/shared/ipc.ts)、`src/main/ipc/*Ipc.ts`、[src/preload/index.ts](src/preload/index.ts)）。
+`AppBridge.annotations` 刻意用 `Pick<AnnotationRepository, 'listByBook' | 'save' | 'remove'>` 而不是另写一份声明，端口改了这里会跟着编译报错。摘掉的两个方法各有理由：
+
+- `load()`：主进程在启动时就预读过存档，渲染层再读一次只会覆盖主进程的降级决定。
+- `removeByBook()`：删书必须先删书、后删注解，这个顺序只有主进程知道；暴露给渲染层等于给「书还在、划线没了」开了个口子。渲染层的适配器（`createAnnotationRepository`）调用它会直接 reject。
+
+新增频道时必须三处同步（[src/shared/ipc.ts](src/shared/ipc.ts)、`src/main/ipc/*Ipc.ts`、[src/preload/index.ts](src/preload/index.ts)）。
 
 窗口配置：`contextIsolation: true`、`nodeIntegration: false`。渲染进程只能看到 `window.api` 这一个受控接口。
 
@@ -488,7 +496,23 @@ return bridge?.books ?? new InMemoryBookRepository()
 
 **`dropped` 是三种原因的合并计数**，两边同义：[ParsedLibrary](src/core/adapters/librarySnapshot.ts:38) 把「书籍字段非法」「孤儿进度」「进度字段非法」加在一起，[ParsedAnnotations](src/core/adapters/annotationSnapshot.ts:71) 把「注解字段非法」「同一 `(bookId, id)` 重复」「超出上限被裁」加在一起。其中「孤儿进度」与「超限裁剪」**不是数据损坏**，而是有意的回收，所以这个数偏大并不等于存档有问题。它现在只有测试在读（两个仓储的 `ensureLoaded` 都直接丢弃），界面真要区分「数据坏了」和「正常回收」，得先把这个数拆成明细。
 
-注解的恢复流程与书库的**刻意不共用**，且比它多一道守卫：备份用的 `rename` 失败时（Windows 上文件被占用是常态）**跳过那次重读**。磁盘上躺着的仍是那个坏文件，再读一次必然二次抛错，而启动路径上没有 `catch` 兜住它——书库那边的恢复流程正是踩在这个点上：一旦 `rename` 抛错，异常会一路穿到 `whenReady` 回调并让窗口起不来，注解这边不能复制这个错。`recoveredFiles` 的语义两边保持一致：只表示「这次是救回来的启动」，不表示备份真的成功。
+注解的恢复流程与书库的**刻意不共用**，且比它多一道守卫：备份用的 `rename` 失败时（Windows 上文件被占用是常态）**跳过那次重读**。磁盘上躺着的仍是那个坏文件，再读一次必然二次抛错，而 `openAnnotations` 里没有 `catch` 兜住它。书库那边的恢复流程正是踩在这个点上：一旦 `rename` 抛错，`openLibrary` 会把 `LibraryCorruptError` 二次抛出去——它注释里那句「备份失败不应阻止应用启动」并没有做到。[library.ts](src/main/storage/library.ts) 刻意不动这个逻辑（改了要重新论证一遍书库的恢复语义），这个洞改由下面的启动层兜住，并由 [startup.test.ts](tests/unit/main/startup.test.ts) 直接钉住「`openLibrary` 会抛、启动层仍然给得出可用书库」。`recoveredFiles` 的语义两边保持一致：只表示「这次是救回来的启动」，不表示备份真的成功。
+
+### 启动期：读不出存档也能起来
+
+[openStorageForStartup](src/main/storage/startup.ts) 把上面两道容错包在一起，**任何情况下都返回可用对象，从不抛错**。它在启动链上的位置见 [src/main/index.ts](src/main/index.ts)。
+
+| 情形 | 行为 | 落盘吗 |
+| --- | --- | --- |
+| 正常 / 文件不存在 | 用 JSON 仓储（懒加载） | 落盘 |
+| 存档**损坏** | 由 `openLibrary` / `openAnnotations` 备份改名后以空存档启动 | 落盘（写的是新文件） |
+| 存档**打不开**（路径被目录占住、权限不足、被占用） | **回落内存实现**，记一条 `console.warn` | **不落盘** |
+
+第三档为什么必须是内存实现，而不是「拿同一套 JSON 仓储再试一次」：那个仓储刚在 `openAnnotations` / `openLibrary` 里连 `load()` 都没走通，`loaded` 永远停在 `false`，接下来的每一次读写都会重新抛同一个异常——等于整场会话的注解功能全废，用户点一次书签弹一次错，没有任何自救余地。内存实现至少让这一场会话读得动、写得进，代价只是改动不保存，而磁盘上那份文件一个字节都不会动（[startup.test.ts](tests/unit/main/startup.test.ts) 逐字节钉住了这一点）。
+
+两个存档**各自独立降级**：注解读不出来不影响书库落盘，反之亦然。降级不是静默的，每条都会在控制台留下能区分「书库」和「注解」的警告。
+
+启动链最后还有一道 `catch`：走到那里说明已经不是存档问题（注册 IPC、建窗口失败），此刻没有可降级的余地，于是弹一个看得懂的 `showErrorBox` 再退出，而不是留下一个没有窗口、用户也杀不掉的进程。
 
 ### 路径越界防护
 
@@ -543,16 +567,16 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（49 文件 / 541 用例）
+### 单元测试地图（53 文件 / 604 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
 | `core/domain` | 7 | 142 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
-| `core/adapters` | 7 | 101 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写、`dropped` 的合并语义 |
+| `core/adapters` | 8 | 129 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写、`dropped` 的合并语义 |
 | `core/services` | 1 | 13 | 导入编排：去重、坏文件清理、书名兜底 |
-| `main` | 7 | 84 | IPC 入参校验、书库与注解的恢复流程、文件落盘与越界防护、设置存储 |
-| `renderer/data` | 4 | 9 | 有无 IPC 桥时的实现选择 |
+| `main` | 9 | 114 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级、文件落盘与越界防护、设置存储 |
+| `renderer/data` | 5 | 14 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 拒绝 |
 | `renderer/reader` | 10 | 97 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互、注解 id 的三档降级 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
@@ -571,19 +595,20 @@ return ePub(copy.buffer)
 
 它还必须**字节确定**：生成前把所有 zip 条目的时间戳统一盖成 `FIXTURE_DATE`。JSZip 默认给每个条目盖当前时间，而 zip 的 DOS 时间戳只有 2 秒精度，同一份 fixture 生成两次就会得到不同字节，一切按内容哈希判等的断言都会随机失败。注意 `zip.file` 的 `date` 选项只作用于显式添加的文件，JSZip 隐式补出的目录条目（`META-INF/`、`OEBPS/`）仍取当前时间，所以固定动作统一放在生成那一步，并由单测钉住。
 
-### 端到端测试（9 条）
+### 端到端测试（10 条）
 
 | # | 用例 | 验证的核心契约 |
 | --- | --- | --- |
 | 1 | 应用启动后展示书架空态 | 冷启动不崩、空态文案 |
 | 2 | 通过 IPC 保存的书籍会落盘并在重启后重新出现 | `books:save` → `library.json` → 重启可读 |
-| 3 | 导入 EPUB 后书籍进入书架并落盘，重启后依然在 | 完整导入链路 + 持久化 |
-| 4 | 点开书架上的书会进入阅读器，翻页后能返回书架 | 渲染 + 翻页 + 返回 |
-| 5 | 阅读进度会落盘，重开应用后从上次位置继续 | CFI 往返 + 节流落盘 |
-| 6 | 重复导入同一本书会被跳过而不是复制第二份 | 内容级去重 |
-| 7 | 目录会列出章节，点击条目后正文跳到对应章节 | 嵌套目录渲染 + 跳转确实换章 |
-| 8 | 阅读设置会落盘，重开应用后依然生效 | 设置作用到书内样式 + 节流落盘 + 重启恢复 |
-| 9 | 渲染进程的 WebCrypto 满足注解 id 生成的降级假设 | `file://` 主框架是安全上下文、`randomUUID` 与 `getRandomValues` 都在、产出的 id 落在 core 白名单内 |
+| 3 | 通过 IPC 保存的注解会落盘，重启后仍然读得到 | `annotations:save` / `remove` → `annotations.json` → 重启可读；非法 id 被主进程挡在信任边界外 |
+| 4 | 导入 EPUB 后书籍进入书架并落盘，重启后依然在 | 完整导入链路 + 持久化 |
+| 5 | 点开书架上的书会进入阅读器，翻页后能返回书架 | 渲染 + 翻页 + 返回 |
+| 6 | 阅读进度会落盘，重开应用后从上次位置继续 | CFI 往返 + 节流落盘 |
+| 7 | 重复导入同一本书会被跳过而不是复制第二份 | 内容级去重 |
+| 8 | 目录会列出章节，点击条目后正文跳到对应章节 | 嵌套目录渲染 + 跳转确实换章 |
+| 9 | 阅读设置会落盘，重开应用后依然生效 | 设置作用到书内样式 + 节流落盘 + 重启恢复 |
+| 10 | 渲染进程的 WebCrypto 满足注解 id 生成的降级假设 | `file://` 主框架是安全上下文、`randomUUID` 与 `getRandomValues` 都在、产出的 id 落在 core 白名单内 |
 
 E2E 基础设施的三个要点：
 
@@ -591,7 +616,7 @@ E2E 基础设施的三个要点：
 2. **原生文件选择框无法自动化**，所以在主进程里替换 `dialog.showOpenDialog` 的返回值。
 3. **正文在 iframe 里**，且转场期间新旧两章会同时存在，所以收集正文时要遍历全部非主 frame 并 join；断言字号则读 `body` 的内联 `style`。
 
-第 9 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
+第 10 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
 
 ### 关于 `npm run verify`
 
@@ -672,7 +697,8 @@ test:e2e = build && playwright test
 | 20 | `206253d` | 功能 | 书签与划线的存档层：`AnnotationCorruptError`、`annotations.json` 快照、JSON 仓储、独立于书库的恢复流程 |
 | 21 | `f996cfe` | 文档 | 回填迭代历程第 20 行的提交号 |
 | 22 | `8fe071f` | 功能 | 注解 id 的三档降级与 E2E 探针；`remove` 对齐「零改动零写盘」 |
-| 23 | `—` | 文档 | 写明 `dropped` 是三种原因的合并计数，并用单测钉住 |
+| 23 | `07eeab4` | 文档 | 写明 `dropped` 是三种原因的合并计数，并用单测钉住 |
+| 24 | `—` | 功能 | 接通注解 IPC 与启动兜底：`annotations:*` 频道、`AnnotationRepository` 适配器与 Provider、启动期降级到内存实现、R4 窗口起不来一并堵住 |
 
 ### 过程中沉淀下来的经验
 
