@@ -200,10 +200,10 @@ describe('FileBookStore.remove / exists', () => {
     const store = createStore()
     const source = await buildEpubFile(join(sourceDir, '三体.epub'))
     const { imported } = await store.import([source])
-    const filePath = imported[0]!.filePath
+    const { filePath, contentHash } = imported[0]!
 
     await expect(store.exists(filePath)).resolves.toBe(true)
-    await store.remove(filePath)
+    await store.remove(contentHash, filePath)
     await expect(store.exists(filePath)).resolves.toBe(false)
   })
 
@@ -212,9 +212,36 @@ describe('FileBookStore.remove / exists', () => {
     const outside = join(sourceDir, '重要文件.epub')
     await writeFile(outside, 'keep me')
 
-    await expect(store.remove(join(store.getBooksDir(), 'missing.epub'))).resolves.toBeUndefined()
-    await expect(store.remove(outside)).rejects.toThrow('文件不在书库目录内')
+    const missing = join(store.getBooksDir(), 'missing.epub')
+    await expect(store.remove('missing', missing)).resolves.toBeUndefined()
+    await expect(store.remove('重要文件', outside)).rejects.toThrow('文件不在书库目录内')
     await expect(readFile(outside, 'utf8')).resolves.toBe('keep me')
+  })
+
+  it('删的必须是这本书自己的文件，串到同一目录里别人的文件上会被拒绝', async () => {
+    const store = createStore()
+    const first = await buildEpubFile(join(sourceDir, 'a.epub'), { title: 'A' })
+    const second = await buildEpubFile(join(sourceDir, 'b.epub'), { title: 'B' })
+    const { imported } = await store.import([first, second])
+    const files = imported.map((file) => file.filePath)
+
+    // 书库存档是明文，filePath 可以被改成同目录里另一本书的路径；
+    // 只校验「在 books/ 内」挡不住这种串号，删掉的就是别人的正文
+    await expect(store.remove(imported[0]!.contentHash, files[1]!)).rejects.toThrow('文件不属于这本书')
+
+    await expect(store.exists(files[0]!)).resolves.toBe(true)
+    await expect(store.exists(files[1]!)).resolves.toBe(true)
+  })
+
+  it('书库目录自身不能被当成书籍文件删掉', async () => {
+    const store = createStore()
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'))
+    const { imported } = await store.import([source])
+    const booksDir = store.getBooksDir()
+
+    await expect(store.remove(imported[0]!.contentHash, booksDir)).rejects.toThrow('文件不在书库目录内')
+
+    await expect(store.exists(imported[0]!.filePath)).resolves.toBe(true)
   })
 
   it('exists 对目录与不存在的路径都返回 false', async () => {
@@ -225,5 +252,79 @@ describe('FileBookStore.remove / exists', () => {
     await expect(store.exists(store.getBooksDir())).resolves.toBe(false)
     await expect(store.exists(join(store.getBooksDir(), 'dir.epub'))).resolves.toBe(false)
     await expect(store.exists(join(workDir, 'library.json'))).resolves.toBe(false)
+  })
+})
+
+describe('FileBookStore.removeCover', () => {
+  it('删掉封面后 readCover 返回 null', async () => {
+    const store = createStore()
+    const coverPath = await store.writeCover('abc123', new Uint8Array([1, 2, 3]), 'png')
+
+    await store.removeCover('abc123', coverPath)
+
+    await expect(store.readCover(coverPath)).resolves.toBeNull()
+  })
+
+  it('删不存在的封面不报错', async () => {
+    const store = createStore()
+    const missing = join(store.getCoversDir(), 'missing.png')
+
+    await expect(store.removeCover('missing', missing)).resolves.toBeUndefined()
+  })
+
+  it('两处目录不能互串：封面路径不能交给 remove，书籍路径不能交给 removeCover', async () => {
+    const store = createStore()
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'))
+    const { imported } = await store.import([source])
+    const bookFilePath = imported[0]!.filePath
+    const coverPath = await store.writeCover('abc123', new Uint8Array([1]), 'png')
+
+    await expect(store.remove('abc123', coverPath)).rejects.toThrow('文件不在书库目录内')
+    await expect(store.removeCover('abc123', bookFilePath)).rejects.toThrow('文件不在书库目录内')
+
+    // 被拒绝之后两个文件都得原样还在，拒绝不能是「先删了再报错」
+    await expect(store.exists(bookFilePath)).resolves.toBe(true)
+    await expect(store.readCover(coverPath)).resolves.toEqual(new Uint8Array([1]))
+  })
+
+  it('删的必须是这本书自己的封面，串到别人的封面上会被拒绝', async () => {
+    const store = createStore()
+    const first = await store.writeCover('abc123', new Uint8Array([1]), 'png')
+    const second = await store.writeCover('def456', new Uint8Array([2]), 'png')
+
+    await expect(store.removeCover('abc123', second)).rejects.toThrow('文件不属于这本书')
+
+    await expect(store.readCover(first)).resolves.toEqual(new Uint8Array([1]))
+    await expect(store.readCover(second)).resolves.toEqual(new Uint8Array([2]))
+  })
+
+  it('书库目录之外的文件会被拒绝', async () => {
+    const store = createStore()
+    const outside = join(sourceDir, '重要图片.png')
+    await writeFile(outside, 'keep me')
+
+    await expect(store.removeCover('重要图片', outside)).rejects.toThrow('文件不在书库目录内')
+    await expect(readFile(outside, 'utf8')).resolves.toBe('keep me')
+  })
+
+  it('目标是目录时抛出错误，而不是把目录连内容一起删掉', async () => {
+    const store = createStore()
+    const dir = join(store.getCoversDir(), 'cover.png')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'inner.txt'), 'keep me')
+
+    await expect(store.removeCover('cover', dir)).rejects.toThrow()
+
+    await expect(readFile(join(dir, 'inner.txt'), 'utf8')).resolves.toBe('keep me')
+  })
+
+  it('封面目录自身不能被当成封面文件删掉', async () => {
+    const store = createStore()
+    const coverPath = await store.writeCover('abc123', new Uint8Array([1]), 'png')
+    const coversDir = store.getCoversDir()
+
+    await expect(store.removeCover('abc123', coversDir)).rejects.toThrow('文件不在书库目录内')
+
+    await expect(store.readCover(coverPath)).resolves.toEqual(new Uint8Array([1]))
   })
 })

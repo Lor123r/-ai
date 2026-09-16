@@ -19,6 +19,7 @@ export class FakeFileStore implements FileStore {
   readonly stored = new Map<string, Uint8Array>()
   readonly covers: StoredCover[] = []
   readonly removed: string[] = []
+  readonly removedCovers: string[] = []
   readonly importFailures = new Map<string, string>()
 
   addSource(sourcePath: string, bytes: Uint8Array): this {
@@ -79,9 +80,16 @@ export class FakeFileStore implements FileStore {
     return cover ? cover.bytes : null
   }
 
-  async remove(filePath: string): Promise<void> {
+  // 归属校验是真实实现的职责，夹具只按路径删；bookId 传对没有由用例里的 spy 断言
+  async remove(_bookId: string, filePath: string): Promise<void> {
     this.removed.push(filePath)
     this.stored.delete(filePath)
+  }
+
+  async removeCover(_bookId: string, coverPath: string): Promise<void> {
+    this.removedCovers.push(coverPath)
+    const index = this.covers.findIndex((entry) => entry.path === coverPath)
+    if (index >= 0) this.covers.splice(index, 1)
   }
 
   async exists(filePath: string): Promise<boolean> {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join, resolve, sep } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import { detectBookFormat } from '@core/domain/book'
 import type { FileStore, ImportResult, ImportedFile } from '@core/ports/fileStore'
 
@@ -82,8 +82,22 @@ export class FileBookStore implements FileStore {
     }
   }
 
-  async remove(filePath: string): Promise<void> {
+  /**
+   * 删除书籍文件；文件不存在时静默返回。
+   *
+   * rm 永远不带 recursive，也不先用 stat 预判类型：失败模式比成功模式重要。
+   * 不带 recursive 时，目标若是目录会抛 ERR_FS_EISDIR 且内部文件完好，
+   * 所以存档被改成一条指向目录的路径最坏只是删不掉，不存在连子树一起删的可能。
+   */
+  async remove(bookId: string, filePath: string): Promise<void> {
     const target = this.requireInside(this.booksDir, filePath)
+    this.requireOwned(bookId, target)
+    await rm(target, { force: true })
+  }
+
+  async removeCover(bookId: string, coverPath: string): Promise<void> {
+    const target = this.requireInside(this.coversDir, coverPath)
+    this.requireOwned(bookId, target)
     await rm(target, { force: true })
   }
 
@@ -125,6 +139,25 @@ export class FileBookStore implements FileStore {
     const resolvedTarget = this.resolveInside(root, target)
     if (resolvedTarget === null) throw new Error('文件不在书库目录内')
     return resolvedTarget
+  }
+
+  /**
+   * 归属校验：路径除了要在库内，还得真的是这本书的文件。
+   *
+   * 越界校验挡的是「跑到书库外面去」，挡不住「跑到同一目录里别人的文件上」。
+   * library.json 是可改明文，把 A 的 filePath 写成 books/<B 的 sha256>.epub，
+   * 四项路径检查全部通过——删掉的是 B 的正文，而 B 还留在书架上打不开。
+   * 命名约定（books/ 下是 <内容摘要>.<格式>，covers/ 下是 <摘要去符号>.<图片格式>）
+   * 由本实现定，所以这条校验也只能在这里做。
+   *
+   * 用「<摘要>.」做前缀而比对而不是拼完整文件名：扩展名由输入格式和图片格式决定，
+   * 硬编码一份扩展名清单迟早和 writeCover / copyIn 走散。带点的前缀不会误伤
+   * 「摘要是另一个的前缀」这种情况。
+   */
+  private requireOwned(bookId: string, target: string): void {
+    if (!basename(target).startsWith(`${safeFileStem(bookId)}.`)) {
+      throw new Error('文件不属于这本书')
+    }
   }
 
   private resolveInside(root: string, target: string): string | null {

@@ -6,15 +6,23 @@ import { createBook } from '@core/domain/book'
 import { createLocator } from '@core/domain/progress'
 import { BOOK_CHANNELS } from '@shared/ipc'
 import { registerBooksIpc } from '../../../src/main/ipc/booksIpc'
+import { FakeFileStore } from '../support/fakeFileStore'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
 const NOW = 1_700_000_000_000
 
-function sampleBook(id = 'a') {
+function sampleBook(id = 'a', coverPath: string | null = null) {
   return {
-    ...createBook({ id, title: '样书', format: 'epub', filePath: `C:/lib/${id}.epub`, fileSize: 1024 }),
+    ...createBook({
+      id,
+      title: '样书',
+      format: 'epub',
+      filePath: `C:/lib/${id}.epub`,
+      fileSize: 1024,
+      coverPath
+    }),
     addedAt: NOW
   }
 }
@@ -28,9 +36,11 @@ function setup(): {
   handlers: Map<string, Handler>
   repository: InMemoryBookRepository
   annotations: InMemoryAnnotationRepository
+  fileStore: FakeFileStore
 } {
   const repository = new InMemoryBookRepository()
   const annotations = new InMemoryAnnotationRepository()
+  const fileStore = new FakeFileStore()
   const handlers = new Map<string, Handler>()
   const ipcMain = {
     handle: (channel: string, listener: Handler) => {
@@ -38,8 +48,8 @@ function setup(): {
     }
   } as unknown as IpcMain
 
-  registerBooksIpc(ipcMain, repository, annotations)
-  return { handlers, repository, annotations }
+  registerBooksIpc(ipcMain, repository, annotations, fileStore)
+  return { handlers, repository, annotations, fileStore }
 }
 
 async function call(handlers: Map<string, Handler>, channel: string, ...args: unknown[]): Promise<unknown> {
@@ -179,20 +189,145 @@ describe('删书时清理该书的注解', () => {
   })
 
   it('删一本已经不在书库里的书也会清注解，把孤儿注解带走', async () => {
-    const { handlers, annotations } = setup()
+    const { handlers, annotations, fileStore } = setup()
     await annotations.save(sampleBookmark('ghost', 'g1'))
 
     await expect(call(handlers, BOOK_CHANNELS.remove, 'ghost')).resolves.toBeUndefined()
     await expect(annotations.listByBook('ghost')).resolves.toEqual([])
+    // 存档里没有这本书就没有路径可回收，不能凭空拼一个出来
+    expect(fileStore.removed).toEqual([])
+    expect(fileStore.removedCovers).toEqual([])
   })
 
   it('书籍 id 非法时一条数据也不碰', async () => {
-    const { handlers, repository, annotations } = setup()
+    const { handlers, repository, annotations, fileStore } = setup()
     const removeBook = vi.spyOn(repository, 'remove')
     const removeByBook = vi.spyOn(annotations, 'removeByBook')
 
     await expect(call(handlers, BOOK_CHANNELS.remove, '   ')).rejects.toThrow('书籍 id 不合法')
     expect(removeBook).not.toHaveBeenCalled()
     expect(removeByBook).not.toHaveBeenCalled()
+    expect(fileStore.removed).toEqual([])
+  })
+})
+
+describe('删书时回收磁盘文件', () => {
+  it('回收的是这本书自己的 epub 与封面路径', async () => {
+    const { handlers, repository, fileStore } = setup()
+    await repository.save(sampleBook('a', 'covers/a.png'))
+    const removeFile = vi.spyOn(fileStore, 'remove')
+    const removeCoverFile = vi.spyOn(fileStore, 'removeCover')
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(fileStore.removed).toEqual(['C:/lib/a.epub'])
+    expect(fileStore.removedCovers).toEqual(['covers/a.png'])
+    // bookId 必须一起传下去：实现的归属校验靠它判断这条路径是不是这本书的
+    expect(removeFile).toHaveBeenCalledWith('a', 'C:/lib/a.epub')
+    expect(removeCoverFile).toHaveBeenCalledWith('a', 'covers/a.png')
+  })
+
+  it('取路径发生在删书之前，否则路径跟着条目一起没了', async () => {
+    const { handlers, repository, fileStore } = setup()
+    await repository.save(sampleBook('a'))
+    const calls: string[] = []
+    const getBook = repository.get.bind(repository)
+    vi.spyOn(repository, 'get').mockImplementation(async (id) => {
+      calls.push('get')
+      return getBook(id)
+    })
+    const removeBook = repository.remove.bind(repository)
+    vi.spyOn(repository, 'remove').mockImplementation(async (id) => {
+      calls.push('remove')
+      await removeBook(id)
+    })
+    vi.spyOn(fileStore, 'remove').mockImplementation(async (_bookId, filePath) => {
+      calls.push(`file:${filePath}`)
+    })
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    // 反序实现时 get 只会拿到 null，calls 里根本没有 file 这一项
+    expect(calls).toEqual(['get', 'remove', 'file:C:/lib/a.epub'])
+  })
+
+  it('删书这一步失败时，两个磁盘文件一个都不动', async () => {
+    const { handlers, repository, annotations, fileStore } = setup()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await repository.save(sampleBook('a', 'covers/a.png'))
+    await annotations.save(sampleBookmark('a', 'a1'))
+    const removeByBook = vi.spyOn(annotations, 'removeByBook')
+    vi.spyOn(repository, 'remove').mockRejectedValueOnce(new Error('书库存档落盘失败'))
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).rejects.toThrow('书库存档落盘失败')
+
+    // 删书是唯一必须成功的一步，它失败就得立刻中止：继续往下走会留下
+    // 「书还在书架上、正文文件已经被删」这种点开读不了的坏状态
+    expect(removeByBook).not.toHaveBeenCalled()
+    expect(fileStore.removed).toEqual([])
+    expect(fileStore.removedCovers).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('取路径这一步失败时直接中止，连删书都不做', async () => {
+    const { handlers, repository, annotations, fileStore } = setup()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await repository.save(sampleBook('a', 'covers/a.png'))
+    const removeBook = vi.spyOn(repository, 'remove')
+    const removeByBook = vi.spyOn(annotations, 'removeByBook')
+    vi.spyOn(repository, 'get').mockRejectedValueOnce(new Error('书库存档读不出来'))
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).rejects.toThrow('书库存档读不出来')
+
+    expect(removeBook).not.toHaveBeenCalled()
+    expect(removeByBook).not.toHaveBeenCalled()
+    expect(fileStore.removed).toEqual([])
+    expect(fileStore.removedCovers).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('epub 回收失败时删书仍然算成功，只在控制台留痕', async () => {
+    const { handlers, repository, fileStore } = setup()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await repository.save(sampleBook('a'))
+    // library.json 是用户可改的明文，filePath 完全可能是个越界路径
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).resolves.toBeUndefined()
+    await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('书籍文件没能一并清掉'))
+  })
+
+  it('epub 回收失败不妨碍接着回收封面', async () => {
+    const { handlers, repository, fileStore } = setup()
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await repository.save(sampleBook('a', 'covers/a.png'))
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(fileStore.removedCovers).toEqual(['covers/a.png'])
+  })
+
+  it('封面回收失败时删书仍然算成功，只在控制台留痕', async () => {
+    const { handlers, repository, fileStore } = setup()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await repository.save(sampleBook('a', 'covers/a.png'))
+    vi.spyOn(fileStore, 'removeCover').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+
+    await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).resolves.toBeUndefined()
+    await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
+    expect(fileStore.removed).toEqual(['C:/lib/a.epub'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('封面没能一并清掉'))
+  })
+
+  it('没有封面时不去碰封面路径', async () => {
+    const { handlers, repository, fileStore } = setup()
+    await repository.save(sampleBook('a'))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(fileStore.removed).toEqual(['C:/lib/a.epub'])
+    expect(fileStore.removedCovers).toEqual([])
   })
 })

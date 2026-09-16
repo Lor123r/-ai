@@ -60,12 +60,16 @@ async function startApplication(): Promise<void> {
   // 降级启动与「救回来」的启动都必须留痕，否则用户只会看到书架空了、划线没了
   for (const warning of storage.warnings) console.warn('[storage]', warning)
 
-  registerBooksIpc(ipcMain, storage.library, storage.annotations)
+  // 书库与删书共用同一个文件存储：两份实例各自持有一份目录校验配置，
+  // 多一份就多一处可能忘记同步的地方
+  const fileStore = new FileBookStore({ userDataDir })
+
+  registerBooksIpc(ipcMain, storage.library, storage.annotations, fileStore)
   registerAnnotationsIpc(ipcMain, storage.annotations)
   registerSettingsIpc(ipcMain, openSettings(resolveSettingsFilePath(userDataDir)))
   registerLibraryIpc(ipcMain, {
     repository: storage.library,
-    fileStore: new FileBookStore({ userDataDir }),
+    fileStore,
     dialog,
     getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
   })

@@ -50,8 +50,9 @@ export async function importBooks(sourcePaths: string[], deps: ImportBooksDeps):
 
     const metadata = file.format === 'epub' ? await readEpubSafe(deps.fileStore, file.filePath) : null
     if (file.format === 'epub' && metadata === null) {
-      // 复制进来的坏文件要清掉，避免书库目录里堆垃圾
-      await deps.fileStore.remove(file.filePath)
+      // 复制进来的坏文件要清掉，避免书库目录里堆垃圾。
+      // bookId 在这里就是内容摘要，删除要过归属校验
+      await deps.fileStore.remove(file.contentHash, file.filePath)
       report.failed.push({ sourcePath: file.sourcePath, reason: UNREADABLE_EPUB_REASON })
       continue
     }

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { _electron as electron } from 'playwright'
 import { buildEpubFile } from '../tests/support/epubFixture'
@@ -20,7 +20,7 @@ interface BridgeWindow {
   api?: {
     books: {
       save(book: unknown): Promise<void>
-      list(): Promise<{ id: string }[]>
+      list(): Promise<{ id: string; coverPath: string | null }[]>
       getLocator(bookId: string): Promise<{ percent: number } | null>
     }
     annotations: {
@@ -687,6 +687,15 @@ async function annotationsMention(annotationsPath: string, bookId: string): Prom
   }
 }
 
+/** 列目录下的文件名；目录不在时按空目录处理，让断言失败在「文件还在不在」上。 */
+async function listDir(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir)
+  } catch {
+    return []
+  }
+}
+
 test('在正文里划线会落盘，重启后重新画回正文', async () => {
   const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
   const sourceDir = join(userDataDir, 'sources')
@@ -835,7 +844,7 @@ test('删掉已有的划线后，重启也不会再画回来', async () => {
   }
 })
 
-test('删书会连这本书的注解一起清掉，再导入同一个文件不会复活', async () => {
+test('删书会清掉这本书的注解与磁盘文件，再导入同一个文件不会复活', async () => {
   const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
   const sourceDir = join(userDataDir, 'sources')
   await mkdir(sourceDir, { recursive: true })
@@ -858,6 +867,16 @@ test('删书会连这本书的注解一起清掉，再导入同一个文件不�
       bookId = shelf[0]?.id ?? ''
       expect(bookId).not.toBe('')
 
+      const coverPath = shelf[0]?.coverPath ?? null
+      if (coverPath === null) throw new Error('这条用例依赖 fixture 默认带封面')
+      const coverFileName = basename(coverPath)
+      const booksDir = join(userDataDir, 'books')
+      const coversDir = join(userDataDir, 'covers')
+
+      // 先确认这两个文件真的落过盘，否则后面「删掉了」可能只是从来没写出来过
+      expect(await listDir(booksDir)).toContain(`${bookId}.epub`)
+      expect(await listDir(coversDir)).toContain(coverFileName)
+
       await saveAnnotation(page, bookId)
       await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
 
@@ -874,10 +893,17 @@ test('删书会连这本书的注解一起清掉，再导入同一个文件不�
         )
       ).toEqual([])
 
+      // 磁盘上的文件同样要回收。bookId 就是文件内容的 sha256，残留的 epub 与封面
+      // 不会再被任何界面引用到，只会白占空间
+      await expect.poll(() => listDir(booksDir)).not.toContain(`${bookId}.epub`)
+      await expect.poll(() => listDir(coversDir)).not.toContain(coverFileName)
+
       // 同一个文件再导入一次，bookId 会一模一样，注解没有复活才算这条链真的通到了底
       await stubFilePicker(app, [epubPath])
       await page.getByRole('button', { name: '导入书籍' }).click()
       await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      // 回收文件不能把重新导入的路堵死：同一个 sha256 要能重新落盘
+      expect(await listDir(booksDir)).toContain(`${bookId}.epub`)
       await page.getByRole('button', { name: '三体', exact: true }).click()
 
       const reader = page.getByRole('region', { name: '正在阅读《三体》' })
