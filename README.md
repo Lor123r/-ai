@@ -662,7 +662,7 @@ test:e2e = build && playwright test
 | 17 | `961b881` | 规范 | 添加 `.claude/agents` 子 Agent 定义纳入 Git，用单测守卫格式并在 `AGENTS.md` 里引用 |
 | 18 | `338c2bf` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
 | 19 | `09df618` | 规范 | 收窄子 Agent 能力边界：删掉 `tools:` 里的执行能力、声明无命令权限、用单测钉住 |
-| 20 | `—` | 功能 | 书签与划线的存档层：`AnnotationCorruptError`、`annotations.json` 快照、JSON 仓储、独立于书库的恢复流程 |
+| 20 | `206253d` | 功能 | 书签与划线的存档层：`AnnotationCorruptError`、`annotations.json` 快照、JSON 仓储、独立于书库的恢复流程 |
 
 ### 过程中沉淀下来的经验
 
