@@ -1,4 +1,4 @@
-import { isFiniteNumber, isNonEmptyString, isRecord } from './guards'
+import { isFiniteNumber, isRecord } from './guards'
 import { clampPercent, normalizeCfi } from './progress'
 
 export type AnnotationKind = 'bookmark' | 'highlight'
@@ -7,7 +7,11 @@ export type AnnotationKind = 'bookmark' | 'highlight'
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink'
 
 interface AnnotationBase {
-  /** 调用方注入，core 不生成随机 id（确定性与可注入性）。 */
+  /**
+   * id 由渲染层生成（crypto.randomUUID()）后经 IPC 传进来，core 只做校验与落盘。
+   * 渲染层为了乐观更新不等待 IPC 往返，所以主进程收到它时它已经在信任边界之外，
+   * 长度与字符集都必须在这里限死（见 isValidAnnotationId）。
+   */
   id: string
   bookId: string
   /** epub.js 的 CFI 字符串，跳转一律优先用它。 */
@@ -44,6 +48,18 @@ export const MAX_EXCERPT_LENGTH = 2000
  */
 export const MAX_CFI_LENGTH = 512
 export const MAX_HREF_LENGTH = 512
+/**
+ * 单条注解 id 的长度上限。id 由渲染层生成，属于不可信输入，
+ * 不限长就等于把「存档里某个键能有多长」交给渲染层决定。
+ */
+export const MAX_ANNOTATION_ID_LENGTH = 128
+/** 书籍 id 长度上限。本仓库的 bookId 是内容 sha256，64 个十六进制字符。 */
+export const MAX_BOOK_ID_LENGTH = 128
+/**
+ * 每本书的注解条数上限。没有它渲染层可以无界增长，
+ * 把一份存档撑到读一次要几秒、序列化一次要几十兆。
+ */
+export const MAX_ANNOTATIONS_PER_BOOK = 1000
 
 export interface BookmarkInput {
   id: string
@@ -135,16 +151,47 @@ export function compareAnnotationsForList(a: Annotation, b: Annotation): number 
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
+/**
+ * 注解 id 的字符集白名单。
+ * 刻意不强制 UUID 形状：渲染层在 crypto.randomUUID 不可用时需要能回落自生成方案，
+ * 把 id 钉成 UUID 就等于把这个回落路堵死。真正要防的是控制字符、空白、路径分隔符
+ * 与引号（它们会污染日志、路径和存档键），白名单已经全部覆盖。
+ */
+const ANNOTATION_ID = /^[A-Za-z0-9_-]+$/
+
+/** 注解 id 是否合法：trim 后非空、不超长、只含白名单字符。 */
+export function isValidAnnotationId(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false
+
+  const id = raw.trim()
+  if (id.length === 0 || id.length > MAX_ANNOTATION_ID_LENGTH) return false
+
+  return ANNOTATION_ID.test(id)
+}
+
+/** 书籍 id 收敛：trim 后非空且不超长才接受，否则返回 null 让调用方丢弃该条。 */
+export function normalizeAnnotationBookId(raw: unknown): string | null {
+  const bookId = typeof raw === 'string' ? raw.trim() : ''
+  if (bookId.length === 0 || bookId.length > MAX_BOOK_ID_LENGTH) return null
+
+  return bookId
+}
+
 function requireAnnotationId(raw: unknown): string {
   const id = typeof raw === 'string' ? raw.trim() : ''
   if (id.length === 0) throw new Error('注解 id 不能为空')
+  if (id.length > MAX_ANNOTATION_ID_LENGTH) throw new Error('注解 id 过长')
+  if (!ANNOTATION_ID.test(id)) throw new Error('注解 id 含非法字符')
   return id
 }
 
 function requireAnnotationBookId(raw: unknown): string {
   const bookId = typeof raw === 'string' ? raw.trim() : ''
   if (bookId.length === 0) throw new Error('注解所属书籍 id 不能为空')
-  return bookId
+
+  const normalized = normalizeAnnotationBookId(raw)
+  if (normalized === null) throw new Error('注解所属书籍 id 过长')
+  return normalized
 }
 
 /** CFI 是注解的唯一落点，缺失就直接抛错，不用空串兜底造出定位不到的注解。 */
@@ -193,8 +240,9 @@ export function createHighlight(input: HighlightInput, now: number = Date.now())
 export function reviveAnnotation(raw: unknown, now: number = Date.now()): Annotation | null {
   if (!isRecord(raw)) return null
 
-  const id = isNonEmptyString(raw.id) ? raw.id.trim() : null
-  const bookId = isNonEmptyString(raw.bookId) ? raw.bookId.trim() : null
+  // id 来自渲染层且会被重放，长度与字符集都要重新校验，不能只判非空
+  const id = isValidAnnotationId(raw.id) ? raw.id.trim() : null
+  const bookId = normalizeAnnotationBookId(raw.bookId)
   if (id === null || bookId === null) return null
 
   const kind = raw.kind

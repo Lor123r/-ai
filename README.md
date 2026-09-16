@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 19 |
-| 单元/组件测试 | 44 个文件 / **463** 个用例，全通过 |
+| 提交数 | 20 |
+| 单元/组件测试 | 48 个文件 / **529** 个用例，全通过 |
 | 端到端测试 | **8** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -87,11 +87,11 @@ npm install --registry=https://registry.npmmirror.com
 | 阅读进度 | 记录 CFI + 全书百分比 + 章节序号，重开应用后回到上次位置 |
 | 目录 | 解析 EPUB 2 NCX 与 EPUB 3 nav，抽屉列出层级并支持点击跳转 |
 | 阅读设置 | 字号 / 行高 / 页边距 / 主题（白天·护眼·夜间）/ 字体（宋体·黑体），改动落盘并在重启后保持 |
-| 容错 | 书库文件损坏时备份并从空书库启动；设置损坏时静默回落默认值 |
+| 容错 | 书库/注解文件损坏时备份并从空数据启动；设置损坏时静默回落默认值 |
 
 ### 明确不做（留给后续版本）
 
-TXT 正文渲染（格式识别已支持，渲染未做）、书签与划线的存储与界面（领域模型已落地，见第 6 章）、全文搜索、注释与批注、多标签页、云同步、打包分发。
+TXT 正文渲染（格式识别已支持，渲染未做）、书签与划线的界面与 IPC（领域模型与存档层已落地，见第 6、9 章）、全文搜索、注释与批注、多标签页、云同步、打包分发。
 
 ---
 
@@ -167,14 +167,14 @@ flowchart TB
 .claude/agents/         # 项目级子 Agent 定义（格式由 tests/unit/repo 守卫）
 src/
   core/                 # 纯逻辑层：可在 Node 与浏览器两种环境下测试
-    domain/             #   Book / ReadingLocator / ReaderSettings / TocEntry + 归一化与复活
+    domain/             #   Book / ReadingLocator / ReaderSettings / TocEntry / Annotation + 归一化与复活
     epub/               #   OPF、container.xml 解析（输入是字节，不碰文件系统）
-    ports/              #   接口定义：BookRepository / FileStore / TextStore / ...
-    adapters/           #   内存实现与 JSON 实现
+    ports/              #   接口定义：BookRepository / AnnotationRepository / FileStore / TextStore / ...
+    adapters/           #   内存实现与 JSON 实现、快照序列化
     services/           #   用例编排：importBooks
   main/                 # 主进程：窗口、IPC 协议层、落盘实现
     ipc/                #   入参校验 + 调用仓库
-    storage/            #   TextStore 的文件实现、书库/设置的打开与恢复
+    storage/            #   TextStore 的文件实现、书库/设置/注解的打开与恢复
     import/             #   FileBookStore：书籍与封面复制、路径越界防护
   preload/              # contextBridge：把 IPC 封装成 window.api
   shared/ipc.ts         # 频道名常量 + AppBridge 接口（主/渲染共用的唯一真相）
@@ -292,8 +292,8 @@ Annotation = BookmarkAnnotation | HighlightAnnotation
 - **刻意不校验 CFI 语法**，只做 trim + 非空 + 上限。CFI 的文本断言（`[pre,post]`）里可以合法出现逗号，「含逗号就是 range」这类判据会误杀合法值；语法权威是 epub.js。
 - **但长度必须限死（`MAX_CFI_LENGTH = 512`），且超长整条拒绝、不许 `slice`**：截断出来的 CFI 语法无效，会造出一个永远定位不到的注解，比直接丢弃更糟。`normalizeCfi` 从 `progress.ts` 复用，注解自己的上限只加在这一侧——改 `progress.ts` 会波及已存进度。
 - **`chapterHref` 比 `toc.ts` 的 `cleanHref` 更严**：它是「存下来下次直接回显」的字段，带 scheme 的绝对 URL（`javascript:` / `data:` / `http:`）一律丢弃。跳转优先用 `cfi`，`href` 只做展示兜底。
-- **`id` 由调用方注入，core 不生成随机 id**：对齐 `now: number = Date.now()` 的可注入约定，单测也就不必去打桩随机源。
-- 与 `reviveBook` / `reviveLocator` 同款：`reviveAnnotation` 对 `id` / `bookId` / `kind` / `cfi` 任一非法就返回 `null`，让调用方只丢弃这一条，而不是让整本书的注解都读不出来。
+- **`id` 由渲染层生成，主进程只校验**：调用方注入 `crypto.randomUUID()`，core 不生成随机 id（对齐 `now: number = Date.now()` 的可注入约定，单测也不必打桩随机源）。渲染层为了做乐观更新不等 IPC 往返，所以这条 id 到主进程时已经在信任边界之外。**但 core 不强制 UUID 形状**，只限死「长度 ≤ 128 + 字符集 `[A-Za-z0-9_-]`」：把 id 钉成 UUID 就等于堵死渲染层在 `randomUUID` 不可用时的回落方案，而真正要防的控制字符、空白、路径分隔符与引号，白名单已经全覆盖。`bookId` 同样限长，`MAX_ANNOTATIONS_PER_BOOK = 1000` 拦住无界增长。
+- **`reviveAnnotation` 走的是同一套校验，不是另一套**：与 `reviveBook` / `reviveLocator` 同款，`id` / `bookId` / `kind` / `cfi` 任一非法就返回 `null`，让调用方只丢弃这一条，而不是让整本书的注解都读不出来。id 会被重放，所以复活时长度与字符集要**重新**校验，不能只判非空。
 
 ---
 
@@ -438,6 +438,8 @@ flowchart TB
 
 **协议层的职责是校验，不是转发。** 所有 handler 先跑一遍 `reviveBook` / `reviveLocator` / 类型检查，非法数据直接抛错，绝不写进用户书库。
 
+> 注解存档层（第 9 章）当前**没有出现在这张表里**：`openAnnotations` 只有单测调用，启动期尚未接线，`annotations:*` 频道也还没加。新增频道时必须三处同步（[src/shared/ipc.ts](src/shared/ipc.ts)、`src/main/ipc/*Ipc.ts`、[src/preload/index.ts](src/preload/index.ts)）。
+
 窗口配置：`contextIsolation: true`、`nodeIntegration: false`。渲染进程只能看到 `window.api` 这一个受控接口。
 
 ### 渲染进程如何选择实现
@@ -459,9 +461,12 @@ return bridge?.books ?? new InMemoryBookRepository()
 <userData>/
   library.json                        # 书库：书籍数组 + 进度表
   settings.json                       # 阅读设置
+  annotations.json                    # 注解存档：书签与划线数组
   books/<sha256>.<ext>                # 书籍副本，文件名即内容摘要
   covers/<bookId>.<ext>               # 抽取出的封面
 ```
+
+**注解为什么不进 `library.json`**：`library.json` 是「每本书一个进度值」的表，而注解是集合。混在一起会让每次翻页保存进度都得重写全部划线，而且一份坏掉的划线会连带把书库一起判为损坏。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。这两条存档的恢复流程**刻意各写一份**，不复用：[annotations.ts](src/main/storage/annotations.ts) 的备份路径只从传入的 `filePath` 派生，**不硬编码文件名**；且它只认 `AnnotationCorruptError`，遇到 `LibraryCorruptError` 或 IO 失败一律原样抛出，绝不会把书库的损坏当成注解损坏去备份。这条隔离由 [annotationStorageIsolation.test.ts](tests/unit/repo/annotationStorageIsolation.test.ts) 双向钉住（`annotations.ts` 不含 `/library/i`，`library.ts` 不含 `/annotation/i`）。
 
 数据目录由 `app.getPath('userData')` 决定，可用环境变量 `EBOOK_READER_USER_DATA` 覆盖。
 
@@ -475,8 +480,11 @@ return bridge?.books ?? new InMemoryBookRepository()
 | --- | --- | --- |
 | `library.json` | **备份**为 `library.json.corrupt-<时间戳>`，以空书库启动并 `console.warn` | 书库是用户数据，不能删；同时应用必须永远能起来 |
 | `settings.json` | 静默回落默认配置，**不留备份** | 配置读不出来不值得中断启动，也不值得留垃圾文件 |
+| `annotations.json` | **备份**为 `annotations.json.corrupt-<时间戳>`，以空存档启动 | 划线是用户自己敲出来的内容，属于用户数据，不能删 |
 
-`library.json` 的解析是**宽容**的：整份文件不是合法 JSON / 根节点不是对象才算「损坏」（抛 `LibraryCorruptError`）；单条记录坏了只丢弃那一条并计入 `dropped`。没有对应书籍的进度被当作垃圾数据丢弃，避免无限增长。
+`library.json` 与 `annotations.json` 的解析都是**宽容**的：整份文件不是合法 JSON / 根节点不是对象才算「损坏」（分别抛 `LibraryCorruptError` 与 `AnnotationCorruptError`）；单条记录坏了只丢弃那一条并计入 `dropped`。没有对应书籍的进度被当作垃圾数据丢弃，避免无限增长；注解存档独立成档，没有 `books` 数组，也就没有「孤儿记录」那一档。
+
+注解的恢复流程与书库的**刻意不共用**，且比它多一道守卫：备份用的 `rename` 失败时（Windows 上文件被占用是常态）**跳过那次重读**。磁盘上躺着的仍是那个坏文件，再读一次必然二次抛错，而启动路径上没有 `catch` 兜住它——书库那边的恢复流程正是踩在这个点上：一旦 `rename` 抛错，异常会一路穿到 `whenReady` 回调并让窗口起不来，注解这边不能复制这个错。`recoveredFiles` 的语义两边保持一致：只表示「这次是救回来的启动」，不表示备份真的成功。
 
 ### 路径越界防护
 
@@ -526,26 +534,26 @@ return ePub(copy.buffer)
 | 层 | 手段 |
 | --- | --- |
 | `core` 领域与解析 | 纯函数单测，喂内存数据 |
-| `core` 适配器 | **契约测试**：`bookRepositoryContract.ts` 一份用例，内存实现与 JSON 实现共用 |
+| `core` 适配器 | **契约测试**：`bookRepositoryContract.ts` 一份用例，内存实现与 JSON 实现共用；注解仓储另有一份针对「并发写 + 懒加载 + 上限」的单测 |
 | `main` 协议与落盘 | 假 `ipcMain` + 临时目录（`mkdtemp`）真实读写 |
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（44 文件 / 461 用例）
+### 单元测试地图（48 文件 / 529 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
-| `core/domain` | 7 | 129 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
+| `core/domain` | 7 | 142 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
-| `core/adapters` | 5 | 60 | 契约测试、JSON 快照分片容错、串行化 |
+| `core/adapters` | 7 | 97 | 契约测试、JSON 快照分片容错、串行化、注解存档的宽容解析与并发写 |
 | `core/services` | 1 | 13 | 导入编排：去重、坏文件清理、书名兜底 |
-| `main` | 6 | 71 | IPC 入参校验、书库恢复流程、文件落盘与越界防护、设置存储 |
+| `main` | 7 | 84 | IPC 入参校验、书库与注解的恢复流程、文件落盘与越界防护、设置存储 |
 | `renderer/data` | 4 | 9 | 有无 IPC 桥时的实现选择 |
 | `renderer/reader` | 9 | 89 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
-| `tests/unit/repo` | 1 | 7 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力 |
+| `tests/unit/repo` | 2 | 10 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力；注解与书库存储层的源码级隔离 |
 
 `tests/unit/reader/ReaderView.test.tsx`（31 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」这类交互。
 
@@ -653,7 +661,8 @@ test:e2e = build && playwright test
 | 16 | `9b5229b` | 文档 | 补项目总文档 `README.md` |
 | 17 | `961b881` | 规范 | 添加 `.claude/agents` 子 Agent 定义纳入 Git，用单测守卫格式并在 `AGENTS.md` 里引用 |
 | 18 | `338c2bf` | 功能 | 书签与划线的领域模型：判别联合、CFI 长度上限、href 拒绝 scheme |
-| 19 | `—` | 规范 | 收窄子 Agent 能力边界：删掉 `tools:` 里的执行能力、声明无命令权限、用单测钉住 |
+| 19 | `09df618` | 规范 | 收窄子 Agent 能力边界：删掉 `tools:` 里的执行能力、声明无命令权限、用单测钉住 |
+| 20 | `—` | 功能 | 书签与划线的存档层：`AnnotationCorruptError`、`annotations.json` 快照、JSON 仓储、独立于书库的恢复流程 |
 
 ### 过程中沉淀下来的经验
 
@@ -681,7 +690,7 @@ test:e2e = build && playwright test
 ### 后续方向
 
 1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线** —— 领域模型已落地（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）。剩下三层：独立端口 + `annotations.json` 仓储（按**书库**策略容错，划线是用户创作的内容，损坏要备份而不是回落）、`annotations:*` IPC、渲染层的选区内高亮与列表。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+2. **书签与划线** —— 领域模型（[src/core/domain/annotation.ts](src/core/domain/annotation.ts)，见第 6 章）与存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）都已落地，但**还没有生产调用方**。剩下两层：`annotations:*` IPC（三处同步）、渲染层的选区内高亮与列表。接线时还要补一件事：`id` 的生成依赖渲染进程的 `crypto.randomUUID()`，而 jsdom 里这个函数来自 Node 泄进全局的 webcrypto，**与真实渲染进程的安全上下文不是一回事**，需要 E2E 实测；不可用时得启用白名单允许的回落方案。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。

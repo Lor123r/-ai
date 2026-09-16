@@ -6,10 +6,15 @@ import {
   DEFAULT_HIGHLIGHT_COLOR,
   HIGHLIGHT_COLORS,
   isAnnotationKind,
+  isValidAnnotationId,
+  MAX_ANNOTATION_ID_LENGTH,
+  MAX_ANNOTATIONS_PER_BOOK,
+  MAX_BOOK_ID_LENGTH,
   MAX_CFI_LENGTH,
   MAX_EXCERPT_LENGTH,
   MAX_HREF_LENGTH,
   MAX_NOTE_LENGTH,
+  normalizeAnnotationBookId,
   normalizeAnnotationCfi,
   normalizeChapterHref,
   normalizeExcerpt,
@@ -462,5 +467,105 @@ describe('判别联合', () => {
 
     expect(label(highlight)).toBe('pink:片段')
     expect(label(bookmark)).toBe('bookmark:epubcfi(/6/4)')
+  })
+})
+
+describe('isValidAnnotationId', () => {
+  it('字母、数字、下划线与连字符都合法', () => {
+    expect(isValidAnnotationId('a1')).toBe(true)
+    expect(isValidAnnotationId('H_1-b')).toBe(true)
+    expect(isValidAnnotationId('3f2b8c1e-9d4a-4b7c-8e5f-0a1b2c3d4e5f')).toBe(true)
+    expect(isValidAnnotationId('a'.repeat(MAX_ANNOTATION_ID_LENGTH))).toBe(true)
+  })
+
+  it('首尾空白先 trim 再判定，因为落盘用的也是 trim 后的值', () => {
+    expect(isValidAnnotationId(' a1 ')).toBe(true)
+  })
+
+  it('空串、纯空白与非字符串一律非法', () => {
+    expect(isValidAnnotationId('')).toBe(false)
+    expect(isValidAnnotationId('   ')).toBe(false)
+    expect(isValidAnnotationId(null)).toBe(false)
+    expect(isValidAnnotationId(undefined)).toBe(false)
+    expect(isValidAnnotationId(42)).toBe(false)
+    expect(isValidAnnotationId({ id: 'a1' })).toBe(false)
+    expect(isValidAnnotationId(['a1'])).toBe(false)
+  })
+
+  it('超长 id 非法', () => {
+    expect(isValidAnnotationId('a'.repeat(MAX_ANNOTATION_ID_LENGTH + 1))).toBe(false)
+  })
+
+  it('空白、中文、路径分隔符与引号一律非法', () => {
+    expect(isValidAnnotationId('a b')).toBe(false)
+    expect(isValidAnnotationId('注解')).toBe(false)
+    expect(isValidAnnotationId('a/b')).toBe(false)
+    expect(isValidAnnotationId('a\\b')).toBe(false)
+    expect(isValidAnnotationId('..')).toBe(false)
+    expect(isValidAnnotationId('../a')).toBe(false)
+    expect(isValidAnnotationId('a"b')).toBe(false)
+  })
+
+  it('__proto__ 这类名字符合字符集，内部用 Map 存所以不存在原型污染', () => {
+    expect(isValidAnnotationId('__proto__')).toBe(true)
+    expect(isValidAnnotationId('constructor')).toBe(true)
+  })
+})
+
+describe('normalizeAnnotationBookId', () => {
+  it('trim 后非空且不超长才接受', () => {
+    expect(normalizeAnnotationBookId(' b1 ')).toBe('b1')
+    expect(normalizeAnnotationBookId('b'.repeat(MAX_BOOK_ID_LENGTH))).toHaveLength(MAX_BOOK_ID_LENGTH)
+  })
+
+  it('空值、纯空白、非字符串与超长一律返回 null', () => {
+    expect(normalizeAnnotationBookId('')).toBeNull()
+    expect(normalizeAnnotationBookId('  ')).toBeNull()
+    expect(normalizeAnnotationBookId(null)).toBeNull()
+    expect(normalizeAnnotationBookId(42)).toBeNull()
+    expect(normalizeAnnotationBookId('b'.repeat(MAX_BOOK_ID_LENGTH + 1))).toBeNull()
+  })
+})
+
+describe('注解 id 的长度与字符集上限', () => {
+  it('createBookmark / createHighlight 超长 id 抛错，正好等于上限仍然合法', () => {
+    const tooLong = 'a'.repeat(MAX_ANNOTATION_ID_LENGTH + 1)
+
+    expect(() => createBookmark({ id: tooLong, bookId: 'b1', cfi: 'epubcfi(/6/4)' })).toThrow(/^注解 id 过长$/)
+    expect(() => createHighlight({ id: tooLong, bookId: 'b1', cfi: 'epubcfi(/6/4)' })).toThrow(/^注解 id 过长$/)
+    expect(
+      createBookmark({ id: 'a'.repeat(MAX_ANNOTATION_ID_LENGTH), bookId: 'b1', cfi: 'epubcfi(/6/4)' }).id
+    ).toHaveLength(MAX_ANNOTATION_ID_LENGTH)
+  })
+
+  it('createBookmark / createHighlight 非法字符抛错', () => {
+    for (const id of ['a b', 'a/b', 'a\\b', '注解', 'a"b']) {
+      expect(() => createBookmark({ id, bookId: 'b1', cfi: 'epubcfi(/6/4)' })).toThrow(/^注解 id 含非法字符$/)
+      expect(() => createHighlight({ id, bookId: 'b1', cfi: 'epubcfi(/6/4)' })).toThrow(/^注解 id 含非法字符$/)
+    }
+  })
+
+  it('bookId 超长时抛错', () => {
+    const tooLong = 'b'.repeat(MAX_BOOK_ID_LENGTH + 1)
+
+    expect(() => createBookmark({ id: 'a1', bookId: tooLong, cfi: 'epubcfi(/6/4)' })).toThrow(
+      /^注解所属书籍 id 过长$/
+    )
+    expect(() => createHighlight({ id: 'h1', bookId: tooLong, cfi: 'epubcfi(/6/4)' })).toThrow(
+      /^注解所属书籍 id 过长$/
+    )
+  })
+
+  it('reviveAnnotation 对非法 id / bookId 返回 null，而不是截断成合法值', () => {
+    expect(reviveAnnotation(reviveInput({ id: 'a b' }))).toBeNull()
+    expect(reviveAnnotation(reviveInput({ id: 'a'.repeat(MAX_ANNOTATION_ID_LENGTH + 1) }))).toBeNull()
+    expect(reviveAnnotation(reviveInput({ bookId: 'b'.repeat(MAX_BOOK_ID_LENGTH + 1) }))).toBeNull()
+    // 字符集里的怪名字照样能原样读回来
+    expect(reviveAnnotation(reviveInput({ id: '__proto__' }))?.id).toBe('__proto__')
+  })
+
+  it('MAX_ANNOTATIONS_PER_BOOK 是正整数', () => {
+    expect(Number.isInteger(MAX_ANNOTATIONS_PER_BOOK)).toBe(true)
+    expect(MAX_ANNOTATIONS_PER_BOOK).toBeGreaterThan(0)
   })
 })
