@@ -917,7 +917,7 @@ test:e2e = build && playwright test
 | 34 | `27305cb` | 功能 | TXT 正文通道：`ReaderView` 收成按格式分派的路由，EPUB 那一套完整搬到 `EpubReaderView` 并共用新抽出的 `ReaderChrome` 外壳；新增 `decodeText.ts`（BOM → UTF-8 严格 → GB18030 回退）、`textBook.ts`（换行归一化 + 空行分块 + 块内页反解）与 `textPagination.ts`（CSS 多栏的分页算术），`TxtReaderView` 实现翻页、16 MB 上限、续读反解与「暂不支持注解」的说明，并补齐单测与端到端用例 |
 | 35 | `d3fa7f5` | 修复 | 书架两处观感缺陷与一处 E2E 偶发失败：`.app-body` 从横向排布改成纵向，导入结果提示不再和书架抢同一行而被压成窄竖条（实测 88px 宽，另加一条按宽度断言的端到端用例钉住）；空书架文案补上 TXT；TXT 翻页进度断言改为在页面内轮询到读数稳定，修掉「百分比由 `useEffect` 回写、点完立刻读 DOM 会拿到上一页旧值」导致的偶发失败 |
 | 36 | `bc938d5` | 修复 | 书卡的开书热区只有书名那一小块文字，封面这块面积最大的地方是死区 —— 实测书名按钮 45x21、封面 162x216，点封面时整卡唯一的 `onClick` 根本没被触发，界面上看起来就是「点了没反应」。改法是把 `.book-card` 设为定位基准，书名按钮用 `::after { inset: 0 }` 把热区撑满整张卡片（仍然只有一个交互元素，不必把封面里的 `img` 改成按钮），删除按钮抬到覆盖层之上免得被吃掉；端到端用例改为按坐标点封面进书，并补上书名按钮仍可点的断言 |
-| 37 | `—` | 功能 | TXT 的目录生成与编码提示：`decodeText` 改为回报 `{ text, encoding, uncertain }`（`uncertain` 取「解出来的正文里有没有 U+FFFD」），解不干净时在头部下面加一行非阻断的 `role="status"` 提示；新增 core 层 `textToc.ts`，按「第 N 章」这类整行标题现算目录（一个块里的多个标题也认，全都认不出就退化成按块首列），目录抽屉对 `TocItem` 泛型化后与 EPUB 共用（`TocEntry` 相应改为 `extends TocItem`），TXT 跳转按块内偏移换算页码（新增 `blockPageFromOffset`，以及把「跳到当前块」这种状态不变的情况叫醒的 `jumpSeq`），并补齐单测与端到端用例 |
+| 37 | `ac0666c` | 功能 | TXT 的目录生成与编码提示：`decodeText` 改为回报 `{ text, encoding, uncertain }`（`uncertain` 取「解出来的正文里有没有 U+FFFD」），解不干净时在头部下面加一行非阻断的 `role="status"` 提示；新增 core 层 `textToc.ts`，按「第 N 章」这类整行标题现算目录（一个块里的多个标题也认，全都认不出就退化成按块首列），目录抽屉对 `TocItem` 泛型化后与 EPUB 共用（`TocEntry` 相应改为 `extends TocItem`），TXT 跳转按块内偏移换算页码（新增 `blockPageFromOffset`，以及把「跳到当前块」这种状态不变的情况叫醒的 `jumpSeq`），并补齐单测与端到端用例 |
 
 ### 过程中沉淀下来的经验
 
