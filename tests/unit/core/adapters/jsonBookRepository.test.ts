@@ -97,3 +97,74 @@ describe('JsonBookRepository 持久化', () => {
     expect(JSON.parse(store.current ?? '').books).toHaveLength(3)
   })
 })
+
+describe('JsonBookRepository 落盘失败时回滚内存', () => {
+  it('save 落盘失败后内存里不会留下一本不存在的书', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonBookRepository(store)
+    store.failWith(new Error('磁盘已满'))
+
+    await expect(repo.save(sampleBook('a'))).rejects.toThrow('磁盘已满')
+    store.failWith(null)
+
+    // 内存不回滚就会读到「重启后就消失」的书；调用方据此删掉磁盘文件，
+    // 反而会留下文件没了、书又回来的坏状态
+    await expect(repo.list()).resolves.toEqual([])
+    await expect(repo.get('a')).resolves.toBeNull()
+  })
+
+  it('remove 落盘失败后书与进度都还在', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonBookRepository(store)
+    await repo.save(sampleBook('a'))
+    await repo.saveLocator('a', createLocator({ cfi: 'epubcfi(/6/4!/4/2)', percent: 0.5, chapterIndex: 1 }, NOW))
+    store.failWith(new Error('磁盘已满'))
+
+    await expect(repo.remove('a')).rejects.toThrow('磁盘已满')
+    store.failWith(null)
+
+    await expect(repo.get('a')).resolves.toEqual(sampleBook('a'))
+    await expect(repo.getLocator('a')).resolves.not.toBeNull()
+  })
+
+  it('saveLocator 落盘失败后进度不会假装已经存下', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonBookRepository(store)
+    await repo.save(sampleBook('a'))
+    store.failWith(new Error('磁盘已满'))
+
+    await expect(
+      repo.saveLocator('a', createLocator({ cfi: 'epubcfi(/6/4!/4/2)', percent: 0.5, chapterIndex: 1 }, NOW))
+    ).rejects.toThrow('磁盘已满')
+    store.failWith(null)
+
+    // 认了这份进度会让人停在没存住的那一页
+    await expect(repo.getLocator('a')).resolves.toBeNull()
+  })
+
+  it('markOpened 落盘失败后打开时间保持原样', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonBookRepository(store)
+    await repo.save(sampleBook('a'))
+    store.failWith(new Error('磁盘已满'))
+
+    await expect(repo.markOpened('a', NOW + 1000)).rejects.toThrow('磁盘已满')
+    store.failWith(null)
+
+    await expect(repo.get('a')).resolves.toEqual(sampleBook('a'))
+  })
+
+  it('回滚只作废失败的那一次，之后的写入照常生效', async () => {
+    const store = new InMemoryTextStore()
+    const repo = new JsonBookRepository(store)
+    await repo.save(sampleBook('a'))
+    store.failWith(new Error('磁盘已满'))
+    await expect(repo.save(sampleBook('b'))).rejects.toThrow('磁盘已满')
+
+    store.failWith(null)
+    await repo.save(sampleBook('b'))
+
+    const ids = (await repo.list()).map((book) => book.id)
+    expect(ids).toEqual(['a', 'b'])
+  })
+})

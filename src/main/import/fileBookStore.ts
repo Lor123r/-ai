@@ -17,6 +17,24 @@ export interface FileBookStoreOptions {
 }
 
 /**
+ * 路径越界与归属不符时抛出。
+ *
+ * 与 IO 故障分成两类的原因在调用方：越界路径只可能来自被改过的存档或者代码 bug，
+ * 属于必须让人看见的问题；而文件被占用之类的临时故障重试一次多半就好了。两者都
+ * 混在普通 Error 里，调用方只能按文案猜，日志级别也就无从判起。
+ */
+export class FileStoreBoundaryError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FileStoreBoundaryError'
+  }
+}
+
+export function isFileStoreBoundaryError(error: unknown): error is FileStoreBoundaryError {
+  return error instanceof FileStoreBoundaryError
+}
+
+/**
  * 书库文件的真实落盘实现。
  * 导入时把用户选中的文件复制进 <userData>/books，
  * 文件名用内容 sha256，因此同一本书重复导入就是同一个文件，天然去重；
@@ -126,18 +144,20 @@ export class FileBookStore implements FileStore {
     const target = join(this.booksDir, `${contentHash}.${format}`)
 
     // 同一本书已经导入过就不必重复复制，但仍然返回结果让上层去重
+    let created = false
     if (!(await this.exists(target))) {
       await mkdir(this.booksDir, { recursive: true })
       await writeAtomically(target, bytes)
+      created = true
     }
 
-    return { sourcePath, filePath: target, fileSize: bytes.byteLength, contentHash, format }
+    return { sourcePath, filePath: target, fileSize: bytes.byteLength, contentHash, format, created }
   }
 
   /** 路径必须落在书库目录内，否则一律拒绝，防止越界读写。 */
   private requireInside(root: string, target: string): string {
     const resolvedTarget = this.resolveInside(root, target)
-    if (resolvedTarget === null) throw new Error('文件不在书库目录内')
+    if (resolvedTarget === null) throw new FileStoreBoundaryError('文件不在书库目录内')
     return resolvedTarget
   }
 
@@ -156,7 +176,7 @@ export class FileBookStore implements FileStore {
    */
   private requireOwned(bookId: string, target: string): void {
     if (!basename(target).startsWith(`${safeFileStem(bookId)}.`)) {
-      throw new Error('文件不属于这本书')
+      throw new FileStoreBoundaryError('文件不属于这本书')
     }
   }
 
@@ -176,9 +196,15 @@ async function writeAtomically(target: string, bytes: Uint8Array): Promise<void>
   await rename(tempPath, target)
 }
 
+/**
+ * 摘要之外的字符一律剔掉，保证拼出来的文件名不会跑到目录外面去。
+ *
+ * 洗不干净只可能是存档被改过或者调用方传了脏值（书籍 id 取自内容摘要，正常永远是
+ * 十六进制），所以按边界错误抛，让调用方按 error 级别记下来。
+ */
 function safeFileStem(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9_-]/g, '')
-  if (cleaned.length === 0) throw new Error('非法的文件标识')
+  if (cleaned.length === 0) throw new FileStoreBoundaryError('非法的文件标识')
   return cleaned
 }
 

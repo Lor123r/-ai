@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { UNTITLED_BOOK_TITLE } from '@core/domain/book'
 import {
   importBooks,
+  IMPORT_FAILED_REASON,
   UNREADABLE_EPUB_REASON,
   UNSUPPORTED_FORMAT_REASON
 } from '@core/services/importBooks'
@@ -172,5 +173,123 @@ describe('importBooks', () => {
     })
 
     expect(report.added[0]?.title).toBe(UNTITLED_BOOK_TITLE)
+  })
+})
+
+describe('importBooks 在写入书库失败时的收尾', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** 失败路径会写 console.error，静音掉；要断言的地方自己取 spy。 */
+  function spyLogs() {
+    return {
+      error: vi.spyOn(console, 'error').mockImplementation(() => undefined),
+      warn: vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    }
+  }
+
+  it('保存失败时记成 failed，并撤掉这次落下的正文与封面', async () => {
+    const deps = await setup()
+    const logs = spyLogs()
+    vi.spyOn(deps.repository, 'save').mockRejectedValueOnce(new Error('磁盘已满'))
+
+    const report = await importBooks(['C:/下载/三体.epub'], deps)
+
+    expect(report.added).toEqual([])
+    expect(report.failed).toEqual([{ sourcePath: 'C:/下载/三体.epub', reason: '磁盘已满' }])
+    // 书没进库，这次复制进来的两个文件都得走，否则书架上看不到的字节会一直占盘
+    expect(deps.fileStore.removed).toHaveLength(1)
+    expect(deps.fileStore.removedCovers).toHaveLength(1)
+    expect(deps.fileStore.storedByFormat('epub')).toEqual([])
+    await expect(deps.repository.list()).resolves.toEqual([])
+    expect(logs.error).toHaveBeenCalledWith(expect.stringContaining('三体.epub'), expect.any(Error))
+  })
+
+  it('一个文件保存失败不影响后面的文件入库', async () => {
+    const deps = await setup()
+    spyLogs()
+    deps.fileStore.addSource('C:/下载/另一本.epub', await buildEpubBytes({ title: '另一本' }))
+    vi.spyOn(deps.repository, 'save').mockRejectedValueOnce(new Error('磁盘已满'))
+
+    const report = await importBooks(['C:/下载/三体.epub', 'C:/下载/另一本.epub'], deps)
+
+    expect(report.failed).toHaveLength(1)
+    expect(report.added.map((book) => book.title)).toEqual(['另一本'])
+    await expect(deps.repository.list()).resolves.toHaveLength(1)
+  })
+
+  it('这次没新建的文件不会被当成本次产物删掉', async () => {
+    const deps = await setup()
+    spyLogs()
+    // 上一次导入留下的同一份内容：真实实现会复用它，不重新写盘
+    const primed = await deps.fileStore.import(['C:/下载/三体.epub'])
+    expect(primed.imported[0]?.created).toBe(true)
+
+    vi.spyOn(deps.repository, 'save').mockRejectedValueOnce(new Error('磁盘已满'))
+    const report = await importBooks(['C:/下载/三体.epub'], deps)
+
+    expect(report.failed).toHaveLength(1)
+    expect(deps.fileStore.removed).toEqual([])
+    expect(deps.fileStore.storedByFormat('epub')).toHaveLength(1)
+  })
+
+  it('保存报错但书其实已经进库时，一个字节都不删', async () => {
+    const deps = await setup()
+    spyLogs()
+    const save = deps.repository.save.bind(deps.repository)
+    vi.spyOn(deps.repository, 'save').mockImplementationOnce(async (book) => {
+      // 存档实现先改内存再落盘，落盘失败时书已经在库里了
+      await save(book)
+      throw new Error('磁盘已满')
+    })
+
+    const report = await importBooks(['C:/下载/三体.epub'], deps)
+
+    expect(report.failed).toHaveLength(1)
+    await expect(deps.repository.list()).resolves.toHaveLength(1)
+    // 删了文件就会留下「书架上有条目、点开读不了」，比占盘严重得多
+    expect(deps.fileStore.removed).toEqual([])
+    expect(deps.fileStore.removedCovers).toEqual([])
+    expect(deps.fileStore.storedByFormat('epub')).toHaveLength(1)
+  })
+
+  it('写封面失败也只影响这个文件，文案说明真实原因', async () => {
+    const deps = await setup()
+    spyLogs()
+    vi.spyOn(deps.fileStore, 'writeCover').mockRejectedValueOnce(new Error('封面目录不可写'))
+
+    const report = await importBooks(['C:/下载/三体.epub'], deps)
+
+    // 文案不能写成「保存书籍信息失败」：这一步失败的是封面，正文文件该跟着撤掉
+    expect(report.failed).toEqual([{ sourcePath: 'C:/下载/三体.epub', reason: '封面目录不可写' }])
+    expect(deps.fileStore.removed).toHaveLength(1)
+    expect(deps.fileStore.removedCovers).toEqual([])
+    await expect(deps.repository.list()).resolves.toEqual([])
+  })
+
+  it('读书库文件失败时说明真实原因，而且不删这个文件', async () => {
+    const deps = await setup()
+    spyLogs()
+    vi.spyOn(deps.fileStore, 'read').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+
+    const report = await importBooks(['C:/下载/三体.epub'], deps)
+
+    // 报成「文件已损坏」会把人引向重新下载，但读不出来其实是 IO 或越界
+    expect(report.failed).toEqual([{ sourcePath: 'C:/下载/三体.epub', reason: '文件不在书库目录内' }])
+    expect(deps.fileStore.removed).toEqual([])
+    expect(deps.fileStore.storedByFormat('epub')).toHaveLength(1)
+    await expect(deps.repository.list()).resolves.toEqual([])
+  })
+
+  it('失败抛出的不是 Error 时用固定文案兜底', async () => {
+    const deps = await setup()
+    spyLogs()
+    vi.spyOn(deps.repository, 'save').mockRejectedValueOnce('磁盘炸了')
+
+    const report = await importBooks(['C:/下载/三体.epub'], deps)
+
+    expect(report.failed).toEqual([{ sourcePath: 'C:/下载/三体.epub', reason: IMPORT_FAILED_REASON }])
+    expect(deps.fileStore.removed).toHaveLength(1)
   })
 })

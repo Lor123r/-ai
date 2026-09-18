@@ -56,8 +56,10 @@ export class FakeFileStore implements FileStore {
 
       const contentHash = createHash('sha256').update(bytes).digest('hex')
       const filePath = `books/${contentHash}.${format}`
+      // 目标已存在时真实实现跳过写入、复用原文件，夹具要如实反映这一点
+      const created = !this.stored.has(filePath)
       this.stored.set(filePath, bytes)
-      imported.push({ sourcePath, filePath, fileSize: bytes.byteLength, contentHash, format })
+      imported.push({ sourcePath, filePath, fileSize: bytes.byteLength, contentHash, format, created })
     }
 
     return { imported, failed }

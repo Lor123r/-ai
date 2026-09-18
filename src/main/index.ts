@@ -64,7 +64,11 @@ async function startApplication(): Promise<void> {
   // 多一份就多一处可能忘记同步的地方
   const fileStore = new FileBookStore({ userDataDir })
 
-  registerBooksIpc(ipcMain, storage.library, storage.annotations, fileStore)
+  registerBooksIpc(ipcMain, {
+    repository: storage.library,
+    annotations: storage.annotations,
+    fileStore
+  })
   registerAnnotationsIpc(ipcMain, storage.annotations)
   registerSettingsIpc(ipcMain, openSettings(resolveSettingsFilePath(userDataDir)))
   registerLibraryIpc(ipcMain, {

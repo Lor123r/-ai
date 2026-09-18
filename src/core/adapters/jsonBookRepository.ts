@@ -43,17 +43,31 @@ export class JsonBookRepository implements BookRepository {
     await this.runExclusive(async () => {
       await this.ensureLoaded()
       const existing = this.books.get(book.id)
-      this.books.set(book.id, existing ? { ...book, addedAt: existing.addedAt } : { ...book })
-      await this.flush()
+      await this.commit(
+        () => this.books.set(book.id, existing ? { ...book, addedAt: existing.addedAt } : { ...book }),
+        () => {
+          if (existing) this.books.set(book.id, existing)
+          else this.books.delete(book.id)
+        }
+      )
     })
   }
 
   async remove(id: string): Promise<void> {
     await this.runExclusive(async () => {
       await this.ensureLoaded()
-      this.books.delete(id)
-      this.locators.delete(id)
-      await this.flush()
+      const book = this.books.get(id)
+      const locator = this.locators.get(id)
+      await this.commit(
+        () => {
+          this.books.delete(id)
+          this.locators.delete(id)
+        },
+        () => {
+          if (book) this.books.set(id, book)
+          if (locator) this.locators.set(id, locator)
+        }
+      )
     })
   }
 
@@ -68,8 +82,14 @@ export class JsonBookRepository implements BookRepository {
     await this.runExclusive(async () => {
       await this.ensureLoaded()
       if (!this.books.has(bookId)) throw new Error(`书籍不存在：${bookId}`)
-      this.locators.set(bookId, { ...locator })
-      await this.flush()
+      const existing = this.locators.get(bookId)
+      await this.commit(
+        () => this.locators.set(bookId, { ...locator }),
+        () => {
+          if (existing) this.locators.set(bookId, existing)
+          else this.locators.delete(bookId)
+        }
+      )
     })
   }
 
@@ -78,8 +98,10 @@ export class JsonBookRepository implements BookRepository {
       await this.ensureLoaded()
       const book = this.books.get(id)
       if (!book) throw new Error(`书籍不存在：${id}`)
-      this.books.set(id, { ...book, lastOpenedAt: openedAt })
-      await this.flush()
+      await this.commit(
+        () => this.books.set(id, { ...book, lastOpenedAt: openedAt }),
+        () => this.books.set(id, book)
+      )
     })
   }
 
@@ -98,6 +120,25 @@ export class JsonBookRepository implements BookRepository {
 
   private async flush(): Promise<void> {
     await this.store.write(serializeLibrary(this.books.values(), this.locators))
+  }
+
+  /**
+   * 先改内存再落盘，落盘失败就把内存改回去。
+   *
+   * 回滚不是为了让内存「好看」：调用方看到写失败会按「这次操作没发生」来收尾，比如导入
+   * 失败时删掉刚复制进来的文件。内存里留着一条没落盘的记录，就会变成书架上有这本书、
+   * 正文文件却被清掉的坏状态，比单纯写失败严重得多。回滚用的旧值必须在改动之前取好，
+   * 所以调用方要先 await ensureLoaded()。
+   */
+  private async commit(change: () => void, revert: () => void): Promise<void> {
+    change()
+
+    try {
+      await this.flush()
+    } catch (error) {
+      revert()
+      throw error
+    }
   }
 
   private runExclusive<T>(task: () => Promise<T>): Promise<T> {

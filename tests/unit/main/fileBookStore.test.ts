@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto'
 import {
   BOOKS_DIR_NAME,
   COVERS_DIR_NAME,
-  FileBookStore
+  FileBookStore,
+  isFileStoreBoundaryError
 } from '../../../src/main/import/fileBookStore'
 import { buildEpubFile } from '../../support/epubFixture'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -114,6 +115,61 @@ describe('FileBookStore.import', () => {
 
     expect(result.failed).toEqual([])
     expect(result.imported).toHaveLength(1)
+  })
+
+  it('新建还是复用已有文件，靠 created 区分', async () => {
+    const store = createStore()
+    const first = await buildEpubFile(join(sourceDir, 'a.epub'))
+    const second = await buildEpubFile(join(sourceDir, 'b.epub'))
+
+    const [createdFile] = (await store.import([first])).imported
+    const [reusedFile] = (await store.import([second])).imported
+
+    expect(createdFile?.created).toBe(true)
+    // 同一份内容第二次导入跳过写入、复用原文件，失败清理必须靠这个标记放过它
+    expect(reusedFile?.created).toBe(false)
+    expect(reusedFile?.filePath).toBe(createdFile?.filePath)
+  })
+})
+
+describe('FileBookStore 的边界校验失败', () => {
+  it('越界、归属与非法标识三类拒绝都是同一个可识别的错误类型', async () => {
+    const store = createStore()
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'))
+    const { imported } = await store.import([source])
+
+    await expect(store.read(join(workDir, 'library.json'))).rejects.toSatisfy(isFileStoreBoundaryError)
+    await expect(store.remove('abc123', imported[0]!.filePath)).rejects.toSatisfy(isFileStoreBoundaryError)
+    await expect(store.removeCover('abc123', join(store.getCoversDir(), 'other.png'))).rejects.toSatisfy(
+      isFileStoreBoundaryError
+    )
+    await expect(store.writeCover('///', new Uint8Array([1]), 'png')).rejects.toSatisfy(isFileStoreBoundaryError)
+  })
+
+  it('原有文案一个字都不改，日志里还看得出是哪一类拒绝', async () => {
+    const store = createStore()
+    const source = await buildEpubFile(join(sourceDir, '三体.epub'))
+    const { imported } = await store.import([source])
+
+    await expect(store.read(join(workDir, 'library.json'))).rejects.toThrow('文件不在书库目录内')
+    await expect(store.remove('abc123', imported[0]!.filePath)).rejects.toThrow('文件不属于这本书')
+    await expect(store.writeCover('///', new Uint8Array([1]), 'png')).rejects.toThrow('非法的文件标识')
+  })
+
+  it('磁盘故障不是边界错误，别被同一个判据认领', async () => {
+    const store = createStore()
+
+    await expect(store.read(join(store.getBooksDir(), 'missing.epub'))).rejects.toSatisfy(
+      (error: unknown) => !isFileStoreBoundaryError(error)
+    )
+  })
+
+  it('扩展名校验刻意留在边界类型之外（它只由调用方入参触发）', async () => {
+    const store = createStore()
+
+    await expect(store.writeCover('abc', new Uint8Array([1]), '!!!')).rejects.toSatisfy(
+      (error: unknown) => !isFileStoreBoundaryError(error)
+    )
   })
 })
 

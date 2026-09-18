@@ -9,6 +9,14 @@ export interface ImportedFile {
   /** 文件内容摘要，用作书籍 id，保证同一本书重复导入时不会产生副本。 */
   contentHash: string
   format: BookFormat
+  /**
+   * 这个文件是不是本次调用真正写进书库的。
+   *
+   * 同一份内容重复导入时会复用已有文件，那时 created 为 false —— 清理逻辑据此
+   * 判断某个文件能不能删：只有本次新写的才是自己的产物，复用的那个属于书库里
+   * 已经在册的书。
+   */
+  created: boolean
 }
 
 export interface ImportFailure {
@@ -37,6 +45,9 @@ export interface FileStore {
    * 带上 bookId 是为了校验归属。书库存档是用户可改的明文，只校验「路径落在 books/ 内」
    * 挡不住「把 A 的 filePath 改成 B 的路径」——那会删掉 B 的正文，而 B 还留在书架上，
    * 正是这套收尾最想避免的坏状态。归属要看文件名约定，只有实现知道，调用方代劳不了。
+   *
+   * 越界或归属不符时实现应拒绝，且要让调用方能与临时性的 IO 故障区分开（主进程的实现
+   * 用 FileStoreBoundaryError 区分）：前者说明存档被改过，不该被当成可重试的小毛病。
    */
   remove(bookId: string, filePath: string): Promise<void>
   /**

@@ -5,7 +5,9 @@ import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { createBook } from '@core/domain/book'
 import { createLocator } from '@core/domain/progress'
 import { BOOK_CHANNELS } from '@shared/ipc'
+import { FileStoreBoundaryError } from '../../../src/main/import/fileBookStore'
 import { registerBooksIpc } from '../../../src/main/ipc/booksIpc'
+import { ANNOTATIONS_UNAVAILABLE_MESSAGE } from '../../../src/main/storage/unavailableAnnotationRepository'
 import { FakeFileStore } from '../support/fakeFileStore'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -48,7 +50,7 @@ function setup(): {
     }
   } as unknown as IpcMain
 
-  registerBooksIpc(ipcMain, repository, annotations, fileStore)
+  registerBooksIpc(ipcMain, { repository, annotations, fileStore })
   return { handlers, repository, annotations, fileStore }
 }
 
@@ -181,7 +183,7 @@ describe('删书时清理该书的注解', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     await call(handlers, BOOK_CHANNELS.save, sampleBook())
     // 降级启动时注解仓储就是这个行为
-    vi.spyOn(annotations, 'removeByBook').mockRejectedValueOnce(new Error('注解存档本次会话不可用'))
+    vi.spyOn(annotations, 'removeByBook').mockRejectedValueOnce(new Error(ANNOTATIONS_UNAVAILABLE_MESSAGE))
 
     await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).resolves.toBeUndefined()
     await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
@@ -254,6 +256,7 @@ describe('删书时回收磁盘文件', () => {
   it('删书这一步失败时，两个磁盘文件一个都不动', async () => {
     const { handlers, repository, annotations, fileStore } = setup()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await repository.save(sampleBook('a', 'covers/a.png'))
     await annotations.save(sampleBookmark('a', 'a1'))
     const removeByBook = vi.spyOn(annotations, 'removeByBook')
@@ -267,11 +270,13 @@ describe('删书时回收磁盘文件', () => {
     expect(fileStore.removed).toEqual([])
     expect(fileStore.removedCovers).toEqual([])
     expect(warn).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
   })
 
   it('取路径这一步失败时直接中止，连删书都不做', async () => {
     const { handlers, repository, annotations, fileStore } = setup()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await repository.save(sampleBook('a', 'covers/a.png'))
     const removeBook = vi.spyOn(repository, 'remove')
     const removeByBook = vi.spyOn(annotations, 'removeByBook')
@@ -284,25 +289,26 @@ describe('删书时回收磁盘文件', () => {
     expect(fileStore.removed).toEqual([])
     expect(fileStore.removedCovers).toEqual([])
     expect(warn).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
   })
 
   it('epub 回收失败时删书仍然算成功，只在控制台留痕', async () => {
     const { handlers, repository, fileStore } = setup()
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await repository.save(sampleBook('a'))
     // library.json 是用户可改的明文，filePath 完全可能是个越界路径
-    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new FileStoreBoundaryError('文件不在书库目录内'))
 
     await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).resolves.toBeUndefined()
     await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('书籍文件没能一并清掉'))
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('书籍文件没能一并清掉'))
   })
 
   it('epub 回收失败不妨碍接着回收封面', async () => {
     const { handlers, repository, fileStore } = setup()
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await repository.save(sampleBook('a', 'covers/a.png'))
-    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new FileStoreBoundaryError('文件不在书库目录内'))
 
     await call(handlers, BOOK_CHANNELS.remove, 'a')
 
@@ -311,14 +317,14 @@ describe('删书时回收磁盘文件', () => {
 
   it('封面回收失败时删书仍然算成功，只在控制台留痕', async () => {
     const { handlers, repository, fileStore } = setup()
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     await repository.save(sampleBook('a', 'covers/a.png'))
-    vi.spyOn(fileStore, 'removeCover').mockRejectedValueOnce(new Error('文件不在书库目录内'))
+    vi.spyOn(fileStore, 'removeCover').mockRejectedValueOnce(new FileStoreBoundaryError('文件不属于这本书'))
 
     await expect(call(handlers, BOOK_CHANNELS.remove, 'a')).resolves.toBeUndefined()
     await expect(call(handlers, BOOK_CHANNELS.list)).resolves.toEqual([])
     expect(fileStore.removed).toEqual(['C:/lib/a.epub'])
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('封面没能一并清掉'))
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('封面没能一并清掉'))
   })
 
   it('没有封面时不去碰封面路径', async () => {
@@ -329,5 +335,63 @@ describe('删书时回收磁盘文件', () => {
 
     expect(fileStore.removed).toEqual(['C:/lib/a.epub'])
     expect(fileStore.removedCovers).toEqual([])
+  })
+})
+
+describe('删书的收尾失败按性质分级留痕', () => {
+  /** 两个级别都静音，避免用例输出里混进日志；需要断言的地方自己取 spy。 */
+  function spyLogs() {
+    return {
+      error: vi.spyOn(console, 'error').mockImplementation(() => undefined),
+      warn: vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    }
+  }
+
+  it('路径与归属校验失败按 error 记：那是存档被改坏，不是磁盘出问题', async () => {
+    const { handlers, repository, fileStore } = setup()
+    const logs = spyLogs()
+    await repository.save(sampleBook('a'))
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new FileStoreBoundaryError('文件不在书库目录内'))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(logs.error).toHaveBeenCalledWith(expect.stringContaining('文件不在书库目录内'))
+    expect(logs.warn).not.toHaveBeenCalled()
+  })
+
+  it('临时性的磁盘失败按 warn 记，不吵醒用户', async () => {
+    const { handlers, repository, fileStore } = setup()
+    const logs = spyLogs()
+    await repository.save(sampleBook('a'))
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(Object.assign(new Error('文件被占用'), { code: 'EBUSY' }))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('文件被占用'))
+    expect(logs.error).not.toHaveBeenCalled()
+  })
+
+  it('认不出原因时一律按 error 记，宁可吵也不静默降级', async () => {
+    const { handlers, repository, fileStore } = setup()
+    const logs = spyLogs()
+    await repository.save(sampleBook('a'))
+    vi.spyOn(fileStore, 'remove').mockRejectedValueOnce(new Error('实现里出了个 bug'))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(logs.error).toHaveBeenCalledWith(expect.stringContaining('实现里出了个 bug'))
+    expect(logs.warn).not.toHaveBeenCalled()
+  })
+
+  it('降级启动导致的注解失败按 warn 记，那是刻意的降级状态', async () => {
+    const { handlers, annotations, repository } = setup()
+    const logs = spyLogs()
+    await repository.save(sampleBook('a'))
+    vi.spyOn(annotations, 'removeByBook').mockRejectedValueOnce(new Error(ANNOTATIONS_UNAVAILABLE_MESSAGE))
+
+    await call(handlers, BOOK_CHANNELS.remove, 'a')
+
+    expect(logs.warn).toHaveBeenCalledWith(expect.stringContaining('注解没能一并清掉'))
+    expect(logs.error).not.toHaveBeenCalled()
   })
 })
