@@ -564,8 +564,12 @@ describe('EpubReaderView 阅读设置', () => {
     const settings = new InMemorySettingsRepository({ ...DEFAULT_READER_SETTINGS, fontSize: 24, theme: 'night' })
     const { epub } = await renderReady({ epub: fakeEpub(), settingsRepository: settings })
 
-    expect(epub.override).toHaveBeenCalledWith('font-size', '24px', true)
-    expect(epub.override).toHaveBeenCalledWith('background-color', READER_THEME_COLORS.night.paper, true)
+    // 正文样式写在 [settings, status] 的副作用里，passive effect 是提交之后才刷的：
+    // 「阅读中」一进 DOM 就断言会偶发抢在副作用前面，所以这里必须等而不是直接断言。
+    await waitFor(() => {
+      expect(epub.override).toHaveBeenCalledWith('font-size', '24px', true)
+      expect(epub.override).toHaveBeenCalledWith('background-color', READER_THEME_COLORS.night.paper, true)
+    })
   })
 
   it('改字号会立刻重设正文样式并落盘', async () => {
@@ -671,7 +675,9 @@ describe('EpubReaderView 阅读设置', () => {
     }
     const { epub } = await renderReady({ epub: fakeEpub(), settingsRepository: failing })
 
-    expect(epub.override).toHaveBeenCalledWith('font-size', `${DEFAULT_READER_SETTINGS.fontSize}px`, true)
+    await waitFor(() => {
+      expect(epub.override).toHaveBeenCalledWith('font-size', `${DEFAULT_READER_SETTINGS.fontSize}px`, true)
+    })
     expect(screen.getByText('阅读中')).toBeInTheDocument()
   })
 })
