@@ -63,6 +63,21 @@ async function stubSaveDialog(app: Awaited<ReturnType<typeof electron.launch>>, 
   }, dir)
 }
 
+/**
+ * 在元素的几何中心发一次真实坐标点击，绕开 Playwright 的可点性检查。
+ *
+ * 书卡的开书热区靠 `::after` 覆盖层撑满整张卡片，所以 `.book-card__cover` 的中心点
+ * 会被那个覆盖层接走。Playwright 见目标元素「被别的元素拦截」会拒绝点击 —— 可那
+ * 正是设计意图（点到封面就等于点到书）。要验这种热区，只能按坐标点。
+ */
+async function clickElementCenter(locator: Locator): Promise<void> {
+  const point = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+  })
+  await locator.page().mouse.click(point.x, point.y)
+}
+
 async function seedBook(page: Page, id: string, title: string): Promise<void> {
   await page.evaluate(
     ({ bookId, bookTitle }) =>
@@ -307,7 +322,9 @@ test('点开书架上的书会进入阅读器，翻页后能返回书架', async
       await page.getByRole('button', { name: '导入书籍' }).click()
       await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
 
-      await page.getByRole('button', { name: '三体', exact: true }).click()
+      // 用户伸手去点的是「那本书」，所以热区得铺满整张卡片。
+      // 封面是卡片上面积最大的一块，曾经谁都不响应 —— 点上去像应用没反应。
+      await clickElementCenter(page.locator('.book-card__cover'))
 
       // 书名既是书架上的按钮，也是阅读器标题栏里的 h1
       const reader = page.getByRole('region', { name: '正在阅读《三体》' })
@@ -328,6 +345,10 @@ test('点开书架上的书会进入阅读器，翻页后能返回书架', async
       await expect(reader).toHaveCount(0)
       await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      // 热区铺满之后，书名按钮自己也得还能点
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+      await expect(reader).toBeVisible()
     } finally {
       await app.close()
     }

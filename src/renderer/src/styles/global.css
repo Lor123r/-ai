@@ -139,6 +139,8 @@ body {
 }
 
 .book-card {
+  /* 书名按钮的覆盖层要以此为定位基准 */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -192,6 +194,21 @@ body {
   font-weight: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/*
+ * 把开书的热区撑满整张卡片。
+ *
+ * 全卡只有这一个 onClick，可它的盒子只有书名那点大（实测 45x21），而用户会去点
+ * 封面（162x216）—— 那里原本谁都不响应，点了像没反应。用覆盖层把可点范围铺满卡片，
+ * 比再挂一个按钮好：交互元素仍然只有一个，封面里的 img 也不必改成 button。
+ * `.book-card__title` 的 overflow 不会裁掉它 —— 覆盖层的包含块是 .book-card，
+ * 中间那层 static 定位的祖先不在包含块链上，裁不到它。
+ */
+.book-card__open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
 }
 
 .reader {
@@ -655,6 +672,9 @@ body {
 }
 
 .book-card__remove {
+  /* 抬到书名按钮的覆盖层之上，否则整卡热区会把删除按钮吃掉 */
+  position: relative;
+  z-index: 1;
   padding: 4px 10px;
   background: transparent;
   border: 1px solid var(--line);
