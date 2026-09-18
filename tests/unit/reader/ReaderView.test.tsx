@@ -727,6 +727,7 @@ describe('ReaderView 书签与划线', () => {
       load: () => Promise.resolve(),
       listByBook: () => Promise.reject(reason),
       save: () => Promise.reject(reason),
+      saveMany: () => Promise.reject(reason),
       remove: () => Promise.reject(reason),
       removeByBook: () => Promise.reject(reason)
     }
@@ -974,6 +975,7 @@ describe('ReaderView 书签与划线', () => {
       load: () => inner.load(),
       listByBook: (bookId) => inner.listByBook(bookId),
       save: () => Promise.reject(new Error('磁盘满了')),
+      saveMany: (list) => inner.saveMany(list),
       remove: (bookId, id) => inner.remove(bookId, id),
       removeByBook: (bookId) => inner.removeByBook(bookId)
     }
@@ -1076,6 +1078,7 @@ describe('ReaderView 书签与划线', () => {
       load: () => inner.load(),
       listByBook: (bookId) => inner.listByBook(bookId),
       save: () => Promise.reject(new Error('磁盘满了')),
+      saveMany: (list) => inner.saveMany(list),
       remove: (bookId, id) => inner.remove(bookId, id),
       removeByBook: (bookId) => inner.removeByBook(bookId)
     }

@@ -1,10 +1,6 @@
-import {
-  MAX_ANNOTATIONS_PER_BOOK,
-  compareAnnotationsForList,
-  reviveAnnotation,
-  type Annotation
-} from '../domain/annotation'
+import { MAX_ANNOTATIONS_PER_BOOK, compareAnnotationsForList, type Annotation } from '../domain/annotation'
 import { isRecord } from '../domain/guards'
+import { parseAnnotationEntries, toAnnotationEntry } from './annotationEntry'
 
 export const ANNOTATION_FORMAT_VERSION = 1
 
@@ -21,48 +17,12 @@ export class AnnotationCorruptError extends Error {
   }
 }
 
-/**
- * 逐字段显式构造要落盘的对象。
- * 不能直接把入参 spread 出去：那样会把磁盘上读出来的未知字段（甚至是被塞进来的
- * 恶意字段）原样再写回去，存档里的垃圾数据就永远清不掉了。
- */
-function toSnapshotEntry(annotation: Annotation): Annotation {
-  // 两个分支都逐字段写全，字段顺序与 createBookmark / createHighlight 保持一致
-  if (annotation.kind === 'highlight') {
-    return {
-      id: annotation.id,
-      bookId: annotation.bookId,
-      kind: 'highlight',
-      cfi: annotation.cfi,
-      chapterHref: annotation.chapterHref,
-      percent: annotation.percent,
-      note: annotation.note,
-      excerpt: annotation.excerpt,
-      color: annotation.color,
-      createdAt: annotation.createdAt,
-      updatedAt: annotation.updatedAt
-    }
-  }
-
-  return {
-    id: annotation.id,
-    bookId: annotation.bookId,
-    kind: 'bookmark',
-    cfi: annotation.cfi,
-    chapterHref: annotation.chapterHref,
-    percent: annotation.percent,
-    note: annotation.note,
-    createdAt: annotation.createdAt,
-    updatedAt: annotation.updatedAt
-  }
-}
-
 export function serializeAnnotations(annotations: Iterable<Annotation>): string {
   const ordered = [...annotations].sort(compareAnnotationsForList)
 
   const snapshot: AnnotationSnapshot = {
     version: ANNOTATION_FORMAT_VERSION,
-    annotations: ordered.map(toSnapshotEntry)
+    annotations: ordered.map(toAnnotationEntry)
   }
 
   return `${JSON.stringify(snapshot, null, 2)}\n`
@@ -103,17 +63,12 @@ export function parseAnnotations(text: string, now: number = Date.now()): Parsed
 
   if (!isRecord(raw)) throw new AnnotationCorruptError('注解文件根节点不是对象')
 
-  const byBook = new Map<string, Annotation[]>()
-  let dropped = 0
-
   const rawAnnotations = Array.isArray(raw.annotations) ? raw.annotations : []
-  for (const entry of rawAnnotations) {
-    const annotation = reviveAnnotation(entry, now)
-    if (!annotation) {
-      dropped += 1
-      continue
-    }
+  const parsed = parseAnnotationEntries(rawAnnotations, now)
+  let dropped = parsed.dropped
 
+  const byBook = new Map<string, Annotation[]>()
+  for (const annotation of parsed.entries) {
     const bucket = byBook.get(annotation.bookId)
     if (bucket) bucket.push(annotation)
     else byBook.set(annotation.bookId, [annotation])

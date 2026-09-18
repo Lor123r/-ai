@@ -61,6 +61,12 @@ describe('createAnnotationRepository', () => {
     await expect(createAnnotationRepository().removeByBook('b1')).rejects.toThrow('只能由主进程执行')
   })
 
+  it('saveMany 直接拒绝：批量写入只在主进程的导入流程里做', async () => {
+    window.api = createFakeBridge()
+
+    await expect(createAnnotationRepository().saveMany([bookmark()])).rejects.toThrow('只能由主进程执行')
+  })
+
   it('每次调用都返回可用的仓库', async () => {
     const first = createAnnotationRepository()
     const second = createAnnotationRepository()

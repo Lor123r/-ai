@@ -52,6 +52,45 @@ export class JsonAnnotationRepository implements AnnotationRepository {
     })
   }
 
+  async saveMany(annotations: readonly Annotation[]): Promise<void> {
+    // 空批次不产生任何 I/O：没有要落盘的东西，就不必先把存档读一遍
+    if (annotations.length === 0) return
+
+    await this.runExclusive(async () => {
+      await this.ensureLoaded()
+
+      // 先整体校验再改动：容量不够时整批拒绝，不会留下「写进去一半」的存档。
+      // 同一批里重复出现的 id 只算一次增长，否则一批里塞满同一个 id 会误判超限。
+      const pending = new Set<string>()
+      const growth = new Map<string, number>()
+
+      for (const annotation of annotations) {
+        const key = storageKey(annotation.bookId, annotation.id)
+        if (this.annotations.has(key) || pending.has(key)) continue
+
+        pending.add(key)
+        growth.set(annotation.bookId, (growth.get(annotation.bookId) ?? 0) + 1)
+      }
+
+      for (const [bookId, added] of growth) {
+        if (this.ofBook(bookId).length + added > MAX_ANNOTATIONS_PER_BOOK) {
+          throw new Error('注解数量已达上限')
+        }
+      }
+
+      // 空批次在上面已经返回过了，走到这里必定有东西要写
+
+      // 批内同 id 后写的覆盖先写的，与依次调用 save 的语义一致
+      for (const annotation of annotations) {
+        this.annotations.set(storageKey(annotation.bookId, annotation.id), { ...annotation })
+      }
+
+      // 整批只写一次盘。逐条 save 会因为每次 flush 都把整份存档重写一遍，
+      // 这正是 saveMany 存在的理由
+      await this.flush()
+    })
+  }
+
   async remove(bookId: string, annotationId: string): Promise<void> {
     await this.runExclusive(async () => {
       await this.ensureLoaded()

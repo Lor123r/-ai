@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createBookmark, createHighlight, type Annotation } from '@core/domain/annotation'
+import { MAX_ANNOTATIONS_PER_BOOK, createBookmark, createHighlight, type Annotation } from '@core/domain/annotation'
 import type { AnnotationRepository } from '@core/ports/annotationRepository'
 
 const NOW = 1_700_000_000_000
@@ -14,6 +14,11 @@ function highlight(id: string, bookId = 'b1', createdAt = NOW): Annotation {
     { id, bookId, cfi: CFI, percent: 0.5, excerpt: '摘录', color: 'green' },
     createdAt
   )
+}
+
+/** 造一批刚好占满（或接近占满）某本书容量的注解，用来验证批量写入的容量边界。 */
+function fullBook(bookId: string, count = MAX_ANNOTATIONS_PER_BOOK): Annotation[] {
+  return Array.from({ length: count }, (_, index) => bookmark(`full-${index}`, bookId, NOW - index))
 }
 
 /**
@@ -127,6 +132,70 @@ export function describeAnnotationRepositoryContract(
       const repo = createRepository()
 
       await expect(repo.removeByBook('b1')).resolves.toBe(0)
+    })
+
+    it('saveMany 空数组是空操作', async () => {
+      const repo = createRepository()
+      await repo.save(bookmark('a1'))
+
+      await expect(repo.saveMany([])).resolves.toBeUndefined()
+      await expect(repo.listByBook('b1')).resolves.toEqual([bookmark('a1')])
+    })
+
+    it('saveMany 一次写入整批，读回来按时间排序', async () => {
+      const repo = createRepository()
+
+      await repo.saveMany([
+        bookmark('a1', 'b1', NOW - 2000),
+        highlight('a2', 'b1', NOW),
+        bookmark('a3', 'b2', NOW - 1000)
+      ])
+
+      await expect(repo.listByBook('b1')).resolves.toEqual([
+        highlight('a2', 'b1', NOW),
+        bookmark('a1', 'b1', NOW - 2000)
+      ])
+      await expect(repo.listByBook('b2')).resolves.toEqual([bookmark('a3', 'b2', NOW - 1000)])
+    })
+
+    it('saveMany 批内同 id 后写的覆盖先写的', async () => {
+      const repo = createRepository()
+
+      await repo.saveMany([bookmark('a1', 'b1', NOW, '先写的'), bookmark('a1', 'b1', NOW + 500, '后写的')])
+
+      await expect(repo.listByBook('b1')).resolves.toEqual([bookmark('a1', 'b1', NOW + 500, '后写的')])
+    })
+
+    it('saveMany 覆盖已有条目时不算增长', async () => {
+      const repo = createRepository()
+      await repo.saveMany(fullBook('b1'))
+
+      // 已满容量下再覆盖一条同 id 的注解，不该被容量判断挡下来
+      await expect(repo.saveMany([bookmark('full-0', 'b1', NOW, '改过的笔记')])).resolves.toBeUndefined()
+
+      const list = await repo.listByBook('b1')
+      expect(list).toHaveLength(MAX_ANNOTATIONS_PER_BOOK)
+      expect(list.find((item) => item.id === 'full-0')?.note).toBe('改过的笔记')
+    })
+
+    it('saveMany 会拒绝超出容量的整批，且一条都不写', async () => {
+      const repo = createRepository()
+      await repo.saveMany(fullBook('b1'))
+
+      await expect(repo.saveMany([bookmark('over-1', 'b1'), bookmark('over-2', 'b1')])).rejects.toThrow()
+
+      const list = await repo.listByBook('b1')
+      expect(list).toHaveLength(MAX_ANNOTATIONS_PER_BOOK)
+      expect(list.some((item) => item.id.startsWith('over-'))).toBe(false)
+    })
+
+    it('saveMany 恰好填满容量时成功', async () => {
+      const repo = createRepository()
+      await repo.saveMany(fullBook('b1', MAX_ANNOTATIONS_PER_BOOK - 1))
+
+      await expect(repo.saveMany([bookmark(`full-${MAX_ANNOTATIONS_PER_BOOK - 1}`, 'b1')])).resolves.toBeUndefined()
+
+      await expect(repo.listByBook('b1')).resolves.toHaveLength(MAX_ANNOTATIONS_PER_BOOK)
     })
 
     it('并发保存不会互相覆盖', async () => {

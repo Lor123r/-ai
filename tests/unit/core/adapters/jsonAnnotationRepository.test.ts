@@ -270,4 +270,49 @@ describe('JsonAnnotationRepository 持久化', () => {
     await repo.save(bookmark('a1'))
     await expect(repo.listByBook('b1')).resolves.toEqual([bookmark('a1')])
   })
+
+  it('saveMany 整批只写一次盘', async () => {
+    const store = new CountingTextStore()
+    const repo = new JsonAnnotationRepository(store)
+
+    await repo.saveMany([bookmark('a', NOW - 2000), bookmark('b', NOW), highlight('h', NOW - 1000)])
+
+    // 逐条 save 会把整份存档重写三遍，这正是 saveMany 存在的理由
+    expect(store.writes).toHaveLength(1)
+    expect(store.reads).toBe(1)
+    await expect(new JsonAnnotationRepository(store).listByBook('b1')).resolves.toEqual([
+      bookmark('b', NOW),
+      highlight('h', NOW - 1000),
+      bookmark('a', NOW - 2000)
+    ])
+  })
+
+  it('saveMany 空批次完全不碰磁盘', async () => {
+    const store = new CountingTextStore()
+    const repo = new JsonAnnotationRepository(store)
+
+    await repo.saveMany([])
+
+    expect(store.writes).toEqual([])
+    expect(store.reads).toBe(0)
+  })
+
+  it('saveMany 超出容量时整批拒绝，磁盘上一个字节都没变', async () => {
+    const store = new CountingTextStore(fullSnapshot())
+    const repo = new JsonAnnotationRepository(store, () => NOW)
+
+    await expect(repo.saveMany([bookmark('a-new'), bookmark('b-new')])).rejects.toThrow('注解数量已达上限')
+
+    expect(store.writes).toEqual([])
+    await expect(repo.listByBook('b1')).resolves.toHaveLength(MAX_ANNOTATIONS_PER_BOOK)
+  })
+
+  it('saveMany 被拒绝后仍可继续使用（锁不会卡死）', async () => {
+    const store = new CountingTextStore(fullSnapshot())
+    const repo = new JsonAnnotationRepository(store, () => NOW)
+    await expect(repo.saveMany([bookmark('a-new')])).rejects.toThrow('注解数量已达上限')
+
+    await expect(repo.save(bookmark('a0'))).resolves.toBeUndefined()
+    expect(store.writes).toHaveLength(1)
+  })
 })

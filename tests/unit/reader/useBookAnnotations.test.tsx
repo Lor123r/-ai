@@ -43,6 +43,7 @@ function failingRepository(error: Error, action: 'save' | 'remove'): AnnotationR
     load: () => inner.load(),
     listByBook: (bookId) => inner.listByBook(bookId),
     save: action === 'save' ? async () => Promise.reject(error) : (annotation) => inner.save(annotation),
+    saveMany: (list) => inner.saveMany(list),
     remove: action === 'remove' ? async () => Promise.reject(error) : (bookId, id) => inner.remove(bookId, id),
     removeByBook: (bookId) => inner.removeByBook(bookId)
   }
@@ -335,6 +336,7 @@ describe('useBookAnnotations', () => {
         return repository.listByBook(bookId)
       },
       save: (annotation) => repository.save(annotation),
+      saveMany: (list) => repository.saveMany(list),
       remove: (bookId, id) => repository.remove(bookId, id),
       removeByBook: (bookId) => repository.removeByBook(bookId)
     }

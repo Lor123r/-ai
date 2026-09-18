@@ -35,6 +35,32 @@ export class InMemoryAnnotationRepository implements AnnotationRepository {
     this.annotations.set(key, { ...annotation })
   }
 
+  async saveMany(annotations: readonly Annotation[]): Promise<void> {
+    // 先整体校验再改动：容量不够时整批拒绝，不会留下「写进去一半」的状态。
+    // 同一批里重复出现的 id 只算一次增长，否则一批里塞满同一个 id 会误判超限。
+    const pending = new Set<string>()
+    const growth = new Map<string, number>()
+
+    for (const annotation of annotations) {
+      const key = storageKey(annotation.bookId, annotation.id)
+      if (this.annotations.has(key) || pending.has(key)) continue
+
+      pending.add(key)
+      growth.set(annotation.bookId, (growth.get(annotation.bookId) ?? 0) + 1)
+    }
+
+    for (const [bookId, added] of growth) {
+      if (this.ofBook(bookId).length + added > MAX_ANNOTATIONS_PER_BOOK) {
+        throw new Error('注解数量已达上限')
+      }
+    }
+
+    // 批内同 id 后写的覆盖先写的，与依次调用 save 的语义一致
+    for (const annotation of annotations) {
+      this.annotations.set(storageKey(annotation.bookId, annotation.id), { ...annotation })
+    }
+  }
+
   async remove(bookId: string, annotationId: string): Promise<void> {
     this.annotations.delete(storageKey(bookId, annotationId))
   }

@@ -19,7 +19,7 @@ export const ANNOTATIONS_UNAVAILABLE_MESSAGE = '注解存档本次会话不可�
  *
  * 读也一起失败是有意为之：listByBook 返回空数组会让界面宣称「这本书还没有注解」，
  * 那同样是假话（磁盘上可能正躺着一份读不出来的存档），还会把用户引向「重新标一遍」，
- * 可重新标一样会失败。四个数据方法装死之后，整个功能一致地表现为「本次会话用不了」，
+ * 可重新标一样会失败。五个数据方法装死之后，整个功能一致地表现为「本次会话用不了」，
  * 渲染层只要走它本来就有的失败与回滚路径即可。
  *
  * load() 是唯一保持 resolve 的方法：它的契约在桥接实现里本来就是空操作，而且在启动链
@@ -40,6 +40,10 @@ export class UnavailableAnnotationRepository implements AnnotationRepository {
   }
 
   async save(_annotation: Annotation): Promise<void> {
+    throw new Error(ANNOTATIONS_UNAVAILABLE_MESSAGE)
+  }
+
+  async saveMany(_annotations: readonly Annotation[]): Promise<void> {
     throw new Error(ANNOTATIONS_UNAVAILABLE_MESSAGE)
   }
 

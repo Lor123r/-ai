@@ -27,13 +27,14 @@ function sampleHighlight() {
 }
 
 describe('UnavailableAnnotationRepository', () => {
-  it('四个数据方法一律失败，且文案完全一致（渲染层只需要一套固定文案）', async () => {
+  it('五个数据方法一律失败，且文案完全一致（渲染层只需要一套固定文案）', async () => {
     const repository = new UnavailableAnnotationRepository()
 
     for (const call of [
       () => repository.listByBook('b1'),
       () => repository.save(sampleBookmark()),
       () => repository.save(sampleHighlight()),
+      () => repository.saveMany([sampleBookmark(), sampleHighlight()]),
       () => repository.remove('b1', 'a1'),
       () => repository.removeByBook('b1')
     ]) {

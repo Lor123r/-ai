@@ -5,13 +5,16 @@ import type { AnnotationRepository } from '@core/ports/annotationRepository'
  * 有 IPC 桥就落到主进程，否则退化成会话内有效（浏览器预览与测试用）。
  *
  * 与 createBookRepository 的区别不是风格，是契约：桥只暴露 listByBook / save / remove，
- * 所以这里要显式补上另外两个方法的语义。
+ * 所以这里要显式补上另外三个方法的语义。
  *
  * - load() 空操作：主进程在启动时就预读过存档了，而且「读不到」这件事由它决定并降级
  *   （失败会回落内存实现 + 记警告）。渲染层再 load 一次只会把主进程的降级决定覆盖掉。
  * - removeByBook() 直接拒绝：删书必须先删书、后删注解，这个顺序只有主进程的删书流程
  *   知道。渲染层调它只会造成「书还在、划线没了」的真数据丢失，所以宁可在这里炸掉，
  *   也不要返回一个 0 假装删成功了。
+ * - saveMany() 直接拒绝：批量写只有导入流程会用到，而导入的入口是 annotationTransfer
+ *   这条单独的桥，写盘一律在主进程完成。渲染层调它等于绕过导入的去重与容量规划，
+ *   把一批没经过 planAnnotationImport 的条目直接写进存档。
  */
 export function createAnnotationRepository(): AnnotationRepository {
   const bridge = typeof window === 'undefined' ? undefined : window.api
@@ -22,6 +25,7 @@ export function createAnnotationRepository(): AnnotationRepository {
     load: async () => undefined,
     listByBook: (bookId) => annotations.listByBook(bookId),
     save: (annotation) => annotations.save(annotation),
+    saveMany: () => Promise.reject(new Error('批量写入注解只能由主进程执行，渲染层不得调用')),
     remove: (bookId, annotationId) => annotations.remove(bookId, annotationId),
     removeByBook: () => Promise.reject(new Error('删书清理注解只能由主进程执行，渲染层不得调用'))
   }
