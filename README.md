@@ -794,7 +794,7 @@ test:e2e = build && playwright test
 | 28 | `4896a9c` | 功能 | 删书时回收磁盘上的 epub 与封面：`FileStore` 的 `remove` 与新增的 `removeCover` 都要求传 `bookId` 校验文件归属，主进程按「先删数据、后删文件」收尾，文件删不掉只留告警，并补齐单测与端到端用例 |
 | 29 | `d36dd1d` | 修复 | 清掉三处挂账：删书的收尾失败按性质分级留痕（文件被占用降为告警、越界与未知错误升为错误）；`registerBooksIpc` 收成 deps 对象与 `registerLibraryIpc` 对齐；导入写入书库失败时回收刚复制进来的 epub 与封面，并让单个文件失败不再中断整批；`JsonBookRepository` 四条写操作落盘失败时回滚内存 |
 | 30 | `ebd94cb` | 功能 | 浮条支持四种划线配色并原地改色：色值与中文名抽到 `highlightPalette.ts` 成为唯一归属地，浮条改为四个色块 + 常驻的「删除划线」，`recolorHighlight` 原地改同一条注解（id 与 `createdAt` 都不动），点到当前颜色零改动零写盘，并补齐单测与端到端用例 |
-| 31 | `—` | 功能 | 书签在正文右侧页边显示标记：新增与划线并列的 `createBookmarkMarkSyncer`，按 cfi 记账以正确处理同一 cfi 上的多条书签，并把图层 `add` 的抛错收敛为「画不上就不记账、下轮重试」；标记样式落在 `global.css` 并关掉 `pointer-events`，并补齐单测与端到端用例 |
+| 31 | `0e73176` | 功能 | 书签在正文右侧页边显示标记：新增与划线并列的 `createBookmarkMarkSyncer`，按 cfi 记账以正确处理同一 cfi 上的多条书签，并把图层 `add` 的抛错收敛为「画不上就不记账、下轮重试」；标记样式落在 `global.css` 并关掉 `pointer-events`，并补齐单测与端到端用例 |
 
 ### 过程中沉淀下来的经验
 
