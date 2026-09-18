@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import type { ReaderFontFamily, ReaderSettings, ReaderTheme } from '@core/domain/settings'
 import type { EpubThemeStyler } from './createEpubBook'
 
@@ -47,4 +48,23 @@ export function applyReaderSettings(themes: EpubThemeStyler, settings: ReaderSet
   themes.override('font-family', FONT_STACKS[settings.fontFamily], true)
   themes.override('color', colors.ink, true)
   themes.override('background-color', colors.paper, true)
+}
+
+/** 内联 style 里的自定义属性。React 的 CSSProperties 不认 -- 开头的键，得自己开个口子。 */
+export type ReaderAppearanceStyle = CSSProperties & { [key: `--${string}`]: string }
+
+/**
+ * 把阅读设置变成一串 CSS 变量，写给宿主文档里的正文用（applyReaderSettings 那套是写给
+ * epub.js 的 iframe 的，override 只在那个文档里生效）。
+ *
+ * 只给字号、行高、字体、页边距：颜色刻意不进变量 —— 外壳上的 .reader[data-theme] 已经
+ * 定义了 --paper / --ink，正文作为后代直接继承，同一组配色就不会在 TS 和 CSS 里各存一份。
+ */
+export function readerAppearanceStyle(settings: ReaderSettings): ReaderAppearanceStyle {
+  return {
+    '--reader-font-size': `${settings.fontSize}px`,
+    '--reader-line-height': String(settings.lineHeight),
+    '--reader-page-margin': `${settings.pageMargin}px`,
+    '--reader-font-family': FONT_STACKS[settings.fontFamily]
+  }
 }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
@@ -22,7 +22,11 @@ interface BridgeWindow {
     books: {
       save(book: unknown): Promise<void>
       list(): Promise<{ id: string; coverPath: string | null }[]>
-      getLocator(bookId: string): Promise<{ percent: number } | null>
+      getLocator(bookId: string): Promise<{
+        percent: number
+        cfi: string | null
+        chapterIndex: number | null
+      } | null>
     }
     annotations: {
       listByBook(bookId: string): Promise<unknown[]>
@@ -361,6 +365,119 @@ test('阅读进度会落盘，重开应用后从上次的位置继续', async ()
       const reader = page.getByRole('region', { name: '正在阅读《三体》' })
       await expect(reader.locator('.reader__percent')).toHaveText(savedPercent)
       await expect(reader.getByText('阅读中')).toBeVisible()
+    } finally {
+      await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * TXT 与 EPUB 共用书架与进度模型，但正文通道完全独立：没有 cfi、没有 epub.js，
+ * 分页是自己量 CSS 多栏算出来的。这一条从导入一路盖到重启续读。
+ */
+test('TXT 书能打开、翻页、落盘进度，重启后从同一页继续', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const txtPath = join(sourceDir, '山海经.txt')
+  // 六段、每段八千余字：块数够多，段内也能撑出十来栏，翻几页都还在同一块里
+  const paragraphs = Array.from(
+    { length: 6 },
+    (_unused, index) => `第 ${index + 1} 段\n${'山水草木鸟兽鱼虫'.repeat(1100)}`
+  )
+  await writeFile(txtPath, paragraphs.join('\n\n'), 'utf8')
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    let fourthPage = ''
+    let fifthPage = ''
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(first, [txtPath])
+      await page.getByRole('button', { name: '导入书籍' }).click()
+
+      await expect(page.getByRole('heading', { name: '山海经' })).toBeVisible()
+      await expect(page.getByRole('status')).toHaveText('已导入 1 本')
+
+      await page.getByRole('button', { name: '山海经', exact: true }).click()
+      const reader = page.getByRole('region', { name: '正在阅读《山海经》' })
+      await expect(reader).toBeVisible()
+      await expect(reader.getByText('阅读中')).toBeVisible()
+
+      // 确实走的是 TXT 通道：多栏容器在，epub.js 的 iframe 不该出现
+      await expect(reader.locator('.reader__viewport--text')).toHaveCount(1)
+      await expect(reader.locator('.txt-reader__block')).toContainText('山水草木鸟兽鱼虫')
+      await expect(reader.locator('.reader__viewport iframe')).toHaveCount(0)
+
+      // 没有导航结构就置灰，而不是留一个点了没反应的按钮
+      await expect(reader.getByRole('button', { name: '目录' })).toBeDisabled()
+      await expect(reader.getByRole('button', { name: '加书签' })).toHaveCount(0)
+
+      await reader.getByRole('button', { name: '注解', exact: true }).click()
+      await expect(page.getByText('TXT 书暂不支持注解')).toBeVisible()
+      await expect(page.locator('.annotation-list')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '导出注解' })).toHaveCount(0)
+      await reader.getByRole('button', { name: '关闭注解' }).click()
+
+      const percent = reader.locator('.reader__percent')
+      await expect(percent).toHaveText('0%')
+
+      const next = reader.getByRole('button', { name: '下一页' })
+      for (let index = 0; index < 3; index += 1) await next.click()
+      fourthPage = ((await percent.textContent()) ?? '').trim()
+      expect(fourthPage).not.toBe('0%')
+
+      await next.click()
+      fifthPage = ((await percent.textContent()) ?? '').trim()
+      expect(fifthPage).not.toBe(fourthPage)
+
+      // 往回翻一页要能精确落回上一页，而不是退回块首
+      await reader.getByRole('button', { name: '上一页' }).click()
+      await expect(percent).toHaveText(fourthPage)
+
+      await reader.getByRole('button', { name: '返回书架' }).click()
+      await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
+
+      let persisted: { percent: number; cfi: string | null; chapterIndex: number | null } | null = null
+      await expect
+        .poll(async () => {
+          persisted = await page.evaluate(async () => {
+            const api = (globalThis as unknown as BridgeWindow).api!
+            const [book] = await api.books.list()
+            return book ? await api.books.getLocator(book.id) : null
+          })
+          return persisted?.percent ?? 0
+        })
+        .toBeGreaterThan(0)
+
+      // TXT 没有 cfi，锚点只剩「块序号」这一级
+      expect(persisted!.cfi).toBeNull()
+      expect(Number.isInteger(persisted!.chapterIndex)).toBe(true)
+      expect(Math.round(persisted!.percent * 100)).toBe(Number.parseInt(fourthPage, 10))
+    } finally {
+      await first.close()
+    }
+
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+
+      // 先确认回到书架再点开：渲染进程还没挂载完就点，会点空
+      await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '山海经' })).toBeVisible()
+
+      await page.getByRole('button', { name: '山海经', exact: true }).click()
+      const reader = page.getByRole('region', { name: '正在阅读《山海经》' })
+      await expect(reader.locator('.reader__viewport--text')).toBeVisible()
+
+      // 续读落在第 4 页而不是块首，所以再翻一页正好是上次的第 5 页。
+      // 反解用的是精确算术（percent 不取整），同一窗口尺寸下逐字相等是安全的。
+      await reader.getByRole('button', { name: '下一页' }).click()
+      await expect(reader.locator('.reader__percent')).toHaveText(fifthPage)
     } finally {
       await second.close()
     }

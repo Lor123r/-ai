@@ -12,6 +12,11 @@ interface AnnotationDrawerProps {
   canTransfer: boolean
   /** 最近一次导出 / 导入的结果文案。 */
   transferResult: string | null
+  /**
+   * 本后端暂不支持注解时的说明。有值就只渲染这一行，
+   * 列表、空态与载入态全部短路 —— 一份必然为空的列表比一句实话更容易让人以为坏了。
+   */
+  notice?: string | null
   onExport: () => void
   onImport: () => void
   onSelect: (annotation: Annotation) => void
@@ -46,6 +51,7 @@ export default function AnnotationDrawer({
   error,
   canTransfer,
   transferResult,
+  notice = null,
   onExport,
   onImport,
   onSelect,
@@ -77,7 +83,9 @@ export default function AnnotationDrawer({
           )}
         </div>
       ) : null}
-      {error !== null ? (
+      {notice !== null ? (
+        <p className="reader__drawer-empty">{notice}</p>
+      ) : error !== null ? (
         <p className="reader__drawer-empty">{error}</p>
       ) : status === 'loading' ? (
         <p className="reader__drawer-empty">正在载入注解…</p>

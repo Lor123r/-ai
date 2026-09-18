@@ -66,6 +66,35 @@ describe('AnnotationDrawer', () => {
     expect(screen.queryByText('还没有书签或划线')).not.toBeInTheDocument()
   })
 
+  it('notice 压过所有其它状态：TXT 说明不会被「载入中」或错误文案顶掉', () => {
+    renderDrawer({ notice: 'TXT 暂不支持注解', status: 'loading', error: '读不到存档' })
+
+    expect(screen.getByText('TXT 暂不支持注解')).toBeInTheDocument()
+    expect(screen.queryByText('正在载入注解…')).not.toBeInTheDocument()
+    expect(screen.queryByText('读不到存档')).not.toBeInTheDocument()
+  })
+
+  it('notice 在列表非空时也不渲染列表，免得给出可点的死条目', () => {
+    const annotations = [bookmark('a', 0.2)]
+    const { onRemove, onSelect } = renderDrawer({
+      notice: 'TXT 暂不支持注解',
+      annotations
+    })
+
+    expect(screen.getByText('TXT 暂不支持注解')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '20% 处的书签' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '删除 20% 处的书签' })).not.toBeInTheDocument()
+    expect(onRemove).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(document.querySelector('.annotation-list')).not.toBeInTheDocument()
+  })
+
+  it('没有 notice 时行为与从前一致', () => {
+    renderDrawer({ notice: null })
+
+    expect(screen.getByText('还没有书签或划线')).toBeInTheDocument()
+  })
+
   it('书签与划线放在同一张列表里，各带类型标签', () => {
     renderDrawer({ annotations: [bookmark('a', 0.2), highlight('b', '一句摘录', 0.75)] })
 

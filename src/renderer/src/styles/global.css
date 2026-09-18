@@ -269,6 +269,38 @@ body {
   overflow: hidden;
 }
 
+/*
+ * TXT 正文：页边距放在视口上，正文那一层就是纯粹的内容盒 —— 量出来的 clientWidth
+ * 直接等于一栏该有多宽，不必再去减 padding。
+ *
+ * 分页靠 CSS 多栏：column-fill: auto 让内容先把一栏填满再开下一栏，超出的栏会溢出到
+ * 容器右边（被这里的 overflow: hidden 裁掉），于是 scrollWidth 正好等于全部栏的总宽。
+ * --reader-column-width / --reader-column-gap 由 TxtReaderView 量完写进来，
+ * 首帧还没有宽度时回落到 auto，先按普通单栏流画着。
+ */
+.reader__viewport--text {
+  padding: var(--reader-page-margin, 32px);
+  color: var(--ink);
+}
+
+.txt-reader {
+  height: 100%;
+  overflow: hidden;
+  column-width: var(--reader-column-width, auto);
+  column-gap: var(--reader-column-gap, 0);
+  column-fill: auto;
+  font-family: var(--reader-font-family, inherit);
+  font-size: var(--reader-font-size, 18px);
+  line-height: var(--reader-line-height, 1.7);
+}
+
+/* 段落之间不留白：TXT 里空行本身就是分段符，块与块之间再撑开会让版面忽松忽紧。 */
+.txt-reader__block {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
 /* 抽屉在右侧浮起，不改变正文宽度，设置面板的每次调整都不会因为布局跳动而看不清效果 */
 .reader__body {
   position: relative;

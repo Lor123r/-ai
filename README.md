@@ -1,6 +1,6 @@
 # 电纸书阅读器（MVP）
 
-一个面向 Windows 桌面的 EPUB 阅读器，用 **Electron + React + TypeScript** 构建。
+一个面向 Windows 桌面的 EPUB / TXT 阅读器，用 **Electron + React + TypeScript** 构建。
 本文件是项目的总入口：既说明「怎么跑」，也说明「为什么这么写」以及「每一步是怎么走到这里的」。
 
 ---
@@ -32,9 +32,9 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 迭代轮次 | 33 |
-| 单元/组件测试 | 63 个文件 / **874** 个用例，全通过 |
-| 端到端测试 | **17** 条 Playwright + Electron 用例，全通过 |
+| 迭代轮次 | 34 |
+| 单元/组件测试 | 69 个文件 / **976** 个用例，全通过 |
+| 端到端测试 | **18** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
 
@@ -80,10 +80,11 @@ npm install --registry=https://registry.npmmirror.com
 
 | 能力 | 说明 |
 | --- | --- |
-| 导入 EPUB | 系统文件选择框（支持多选），复制进应用书库，解析书名/作者/封面 |
+| 导入书籍 | 系统文件选择框（支持多选），复制进应用书库；EPUB 解析书名/作者/封面，TXT 不做元数据抽取、书名用文件名兜底 |
 | 内容去重 | 以文件内容 sha256 作为书籍 id，同一本书重复导入只会被跳过 |
 | 书架 | 封面网格、书名、作者、进度条、删除（连带回收这本书的 epub、封面、书签与划线）；排序为「最近阅读 → 导入时间倒序 → id」 |
-| 分页阅读 | 应用内渲染 EPUB，上一页/下一页翻页 |
+| 分页阅读 | 应用内渲染 EPUB 与 TXT，上一页/下一页翻页 |
+| TXT 正文 | 编码按 BOM → UTF-8 严格 → GB18030 回退，按空行分块后用 CSS 多栏分页；进度与阅读设置同 EPUB 共用一套 |
 | 阅读进度 | 记录 CFI + 全书百分比 + 章节序号，重开应用后回到上次位置 |
 | 目录 | 解析 EPUB 2 NCX 与 EPUB 3 nav，抽屉列出层级并支持点击跳转 |
 | 阅读设置 | 字号 / 行高 / 页边距 / 主题（白天·护眼·夜间）/ 字体（宋体·黑体），改动落盘并在重启后保持 |
@@ -93,7 +94,7 @@ npm install --registry=https://registry.npmmirror.com
 
 ### 明确不做（留给后续版本）
 
-TXT 正文渲染（格式识别已支持，渲染未做）、全文搜索、批注、多标签页、云同步、打包分发。
+全文搜索、批注、多标签页、云同步、打包分发。TXT 侧不做注解，也不做目录（理由见第 7.9 章）。
 
 ---
 
@@ -185,7 +186,7 @@ src/
     data/               #   Provider + 工厂函数（决定用 IPC 还是内存实现）
     hooks/useBooks.ts   #   书架数据流
     shelf/              #   书架与封面
-    reader/             #   阅读器、目录、设置、注解抽屉与浮条、epub.js 适配、注解 id 生成
+    reader/             #   阅读器（按格式分派）、EPUB 与 TXT 两个正文后端、目录、设置、注解抽屉与浮条、注解 id 生成
     styles/global.css   #   主题变量与全部样式
 tests/
   unit/                 # 与 src 同构分层的单元测试
@@ -319,7 +320,7 @@ sequenceDiagram
 
 `EBOOK_READER_USER_DATA` 这个环境变量是 E2E 测试的基础设施：让每个用例跑在自己的临时数据目录里，既互不干扰，也不会污染用户真实书库。
 
-### 7.2 导入 EPUB
+### 7.2 导入书籍
 
 ```mermaid
 flowchart LR
@@ -343,13 +344,16 @@ flowchart LR
 2. **单个文件失败不影响其余文件。** 报告里 `added` / `skipped` / `failed` 三个计数分别呈现，每个文件各有一层 `try / catch`。
 3. **坏文件要清理。** 复制进来才发现解析不了的文件会被删掉，否则书库目录里会堆垃圾。
 4. **写入书库失败也要清理。** 已经复制进来的正文与封面若没能变成书库条目，同样会被回收——否则 `books/` 下会留下一份没人引用、最大 512 MB 的 epub。但删除前必须过两道门：`fileStore.import()` 回报这次是不是真的新建了文件，再加上一次 `repository.get()` 确认这本书确实没进库。少任何一道都可能删掉一本好好的书——去重跳过时文件是别人早先复制进来的，而 `save` 也可能「内存写成功、落盘失败」。
-5. **书名兜底**：用源文件名去掉扩展名，比「未命名书籍」有用得多。
+5. **书名兜底**：用源文件名去掉扩展名，比「未命名书籍」有用得多。EPUB 的元数据抽不出来时也走这条兜底。
+6. **TXT 不做元数据抽取。** 扩展名认下来就复制进书库、书名取文件名——TXT 没有格式规范，任何「猜书名」的启发式都是在猜，猜错还不如文件名诚实。这也是导入报告里 TXT 永远不会以「无法解析」失败的原因。
 
 ### 7.3 打开一本书并恢复进度
 
+[ReaderView.tsx](src/renderer/src/reader/ReaderView.tsx) 本身只是一行分派：`format === 'txt'` 交给 [TxtReaderView.tsx](src/renderer/src/reader/TxtReaderView.tsx)，否则交给 [EpubReaderView.tsx](src/renderer/src/reader/EpubReaderView.tsx)。下面这条链路是 EPUB 通道的，TXT 通道见第 7.9 章。
+
 ```mermaid
 sequenceDiagram
-    participant R as ReaderView
+    participant R as EpubReaderView
     participant Repo as BookRepository
     participant CR as BookContentReader
     participant E as epub.js
@@ -406,7 +410,7 @@ flowchart TB
     A["SettingsPanel 触发 onChange(patch)"] --> B["normalizeReaderSettings 收敛"]
     B --> C["setSettings 更新 React 状态"]
     B --> D["writer.push 节流落盘"]
-    C --> E["ReaderView 的 effect"]
+    C --> E["EpubReaderView 的 effect"]
     E --> F["applyReaderSettings(rendition.themes, settings)"]
     F --> G["themes.override(..., !important)"]
     G --> H["epub.js 记进 _overrides，<br/>并逐个 contents.css()"]
@@ -503,6 +507,33 @@ flowchart TB
 8 MB 的导入上限（`MAX_ANNOTATION_FILE_SIZE`）落在 [annotationFile.ts](src/main/transfer/annotationFile.ts) 而不是 core：core 不得碰 fs，连 `stat` 都做不了，没有位置能拦住 `readFile`。先 `stat` 再 `read` 而不是读回来再量长度——上限的意义就是「别把一个 G 的文件读进内存」，读完才知道超了就已经白读了。
 
 另存框的默认文件名由 `annotationFileName(book.title)` 给出：书名来自可改的书库文件，完全可能是 `三体/全集` 这种在 Windows 上存不下去的名字，所以非法字符换空格、合并连续空白、掐掉结尾的点和空格（Windows 会静默丢掉它们，剩下的 `defaultPath` 和实际存下的路径对不上号），再限长 60 字符并**再掐一次尾**（截断后第 60 个字符正好落在分隔符上时，第一轮的规则已经跑过了）。洗完什么都不剩就回落 `未命名书籍-注解.json`，绝不让 `defaultPath` 变成 `.json`。
+
+### 7.9 TXT 正文通道
+
+```mermaid
+flowchart LR
+    A["format === 'txt'"] --> B["ReaderView 分派"]
+    B --> C["contentReader.read(bookId)"]
+    C --> D{"超过 16 MB?"}
+    D -- 是 --> E["报错：文件过大，暂不支持打开"]
+    D -- 否 --> F["decodeTextBytes：BOM → UTF-8 严格 → GB18030 → 宽容 UTF-8"]
+    F --> G["splitTextIntoBlocks：按空行分块"]
+    G -- 0 块 --> H["报错：文件里没有可显示的文本"]
+    G --> I["渲染当前块，量 clientWidth / scrollWidth"]
+    I --> J["--reader-column-width 回写，CSS 多栏成型"]
+    J --> K["按存档 percent 反解块内页"]
+    K --> L["翻页 → 节流落盘（cfi 恒为 null）"]
+```
+
+设计要点：
+
+1. **正文后端各写各的，只共用外壳。** 两个后端共享 [ReaderChrome.tsx](src/renderer/src/reader/ReaderChrome.tsx) 的头部、进度条与翻页按钮，正文那块没有任何共同点：TXT 没有 cfi、没有注解图层，分页还得自己量。强行抽成同一个接口，换来的是一堆「某一边用不上」的可选字段；分派放在 `ReaderView` 里，两边各自的状态与副作用也不会跑到对方身上。
+2. **没有第二套进度模型。** 块就是 TXT 的「章节」：`chapterIndex` 取块序、`spineCount` 取块数、块内第几栏就是 `page`。于是 [progress.ts](src/core/domain/progress.ts) 的 `locatorFromRelocation` / `percentFromRelocation` **一行都不用改**，书架进度条、已读完判定、节流落盘器也全部照旧复用。代价是 `cfi` 恒为 `null`。
+3. **续读只能反解，且反解必须用同一帧量出的栏数。** 只按 `chapterIndex` 打开会落在块首，用户看到的是「读了一半、重开退回块开头」，所以由 `percent` 反算块内页（`blockPageFromLocator`）。这里有个必须踩过才知道的坑：分栏数是**量**出来的，而布局状态要到下一次渲染才更新——在另一个 effect 里读 `layout.totalPages`，读到的是首帧那个恒为 1 的旧值，反解永远给出块首。所以反解写在量宽度的那次 `useLayoutEffect` 里、直接用本次算出的局部变量，并加一条 `layout.columnWidth > 0` 的守卫：首帧 `--reader-column-width` 还是 `auto`，量到的是单栏普通流，同样不能用。反解出来的页码还要再 `clampPage` 一次（改字号会让总页数变少），所以顺序是「先反解、后夹取」。
+4. **编码回退顺序是确定的四级。** BOM 优先（文件自己声明的编码比任何启发式可靠）→ `fatal` 的 UTF-8（解不开就说明不是 UTF-8，而不是「解出乱码」）→ GB18030（覆盖 GBK/GB2312，中文 Windows 的默认码页）→ 非 `fatal` 的 UTF-8（坏字节变 U+FFFD，绝不抛异常）。不做 NUL 密度启发式：没有 BOM 的 UTF-16 在实践中不存在（记事本一定会写 BOM）。换行归一化刻意**不**放在解码里——那是 `splitTextIntoBlocks` 的职责，两处都做会让「空行分段」有两个实现。
+5. **分页靠 CSS 多栏，栏宽自己量。** `column-fill: auto` 让内容先填满一栏再开下一栏，超出的栏溢出到容器右边被 `overflow: hidden` 裁掉，于是 `scrollWidth` 正好等于全部栏的总宽；栏间距取页边距的两倍，让栏间留白等于四周边距。页边距放在视口层、正文层是纯内容盒，量出来的 `clientWidth` 直接就是一栏该有多宽，不必再减 padding。分页算术抽成 [textPagination.ts](src/renderer/src/reader/textPagination.ts) 的纯函数——jsdom 里 `scrollWidth` / `clientWidth` 恒为 0，留在组件里就只剩「文本渲染出来了」可断言。
+6. **两道容量闸，超了直接说不。** 字节上限 16 MB（UTF-8 中文约合 500 万字）挡在解码之前，单块上限 20 万字符挡在排版之前。EPUB 是 epub.js 流式处理的，TXT 却要一次解码成字符串再排版，不设闸就是把渲染进程打满。
+7. **TXT 不开放注解，而且明说。** 没有 cfi 这类稳定锚点，标注定位不回原文；抽屉里给一句「TXT 书暂不支持注解：没有 cfi 这类稳定锚点，标注没法准确定位回原文」，而不是列一个空列表——说清为什么没有，比让人以为「这本书恰好没笔记」诚实。因此 TXT 侧没有书签按钮，目录按钮也是 `disabled`。
 
 ---
 
@@ -693,23 +724,25 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（63 文件 / 874 用例）
+### 单元测试地图（69 文件 / 976 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
-| `core/domain` | 7 | 145 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝 |
+| `core/domain` | 8 | 170 | 归一化、复活、排序、进度换算、目录摊平与目标解析、书签划线的收敛与拒绝、TXT 分块与块内页反解 |
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
 | `core/adapters` | 9 | 170 | 契约测试、JSON 快照分片容错、串行化、四条写操作落盘失败时回滚内存、注解存档的宽容解析与并发写、`dropped` 的合并语义、交换格式的信封硬校验与条目投影复用、批量写入的容量边界与「一批只写一次盘」 |
 | `core/services` | 2 | 36 | 导入编排：去重、坏文件清理、书名兜底、写入书库失败时回收刚复制进来的正文与封面；注解导入的三步规划（重定向 → 按 id 去重 → 按容量截断）与报告计数 |
 | `main` | 11 | 185 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界 |
 | `renderer/data` | 6 | 19 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 与 `saveMany` 拒绝、桥缺失或没有交换能力时工厂回落为 `null` |
-| `renderer/reader` | 15 | 224 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
+| `renderer/reader` | 20 | 301 | 节流器、外观应用、目录读取、设置 hook、`EpubReaderView` 交互、TXT 正文字节解码、分栏分页算术、TXT 阅读器交互与续读反解、共用外壳 `ReaderChrome`、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
 | `tests/unit/repo` | 2 | 10 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力；注解与书库存储层的源码级隔离 |
 
-`tests/unit/reader/ReaderView.test.tsx`（51 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」「书签 toggle」「划线走 `selected` → 注入图层」「书签走 `mark` → 注入页边标记」「翻页收起浮条」这类交互。
+`tests/unit/reader/EpubReaderView.test.tsx`（55 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」「书签 toggle」「划线走 `selected` → 注入图层」「书签走 `mark` → 注入页边标记」「翻页收起浮条」这类交互。
+
+`tests/unit/reader/TxtReaderView.test.tsx`（24 例）是 TXT 那一侧对应的重头戏。jsdom 里 `clientWidth` / `scrollWidth` 恒为 0，所以用例自己用 `Object.defineProperty` 给元素装尺寸桩，并用 `translateX` 的偏移反推「现在落在第几栏」；桩里还专门有一档「首帧单栏普通流」（`--reader-column-width` 仍是 `auto` 时 `scrollWidth` 就等于 `clientWidth`），用来钉住第 7.9 章第 3 条那个「拿首帧栏数反解只会退回块首」的坑——测试里的这档真实到把守卫从 `> 0` 改成 `>= 0` 该用例立刻变红。
 
 ### 测试夹具：现场生成 EPUB
 
@@ -721,7 +754,7 @@ return ePub(copy.buffer)
 
 它还必须**字节确定**：生成前把所有 zip 条目的时间戳统一盖成 `FIXTURE_DATE`。JSZip 默认给每个条目盖当前时间，而 zip 的 DOS 时间戳只有 2 秒精度，同一份 fixture 生成两次就会得到不同字节，一切按内容哈希判等的断言都会随机失败。注意 `zip.file` 的 `date` 选项只作用于显式添加的文件，JSZip 隐式补出的目录条目（`META-INF/`、`OEBPS/`）仍取当前时间，所以固定动作统一放在生成那一步，并由单测钉住。
 
-### 端到端测试（17 条）
+### 端到端测试（18 条）
 
 | # | 用例 | 验证的核心契约 |
 | --- | --- | --- |
@@ -731,17 +764,18 @@ return ePub(copy.buffer)
 | 4 | 导入 EPUB 后书籍进入书架并落盘，重启后依然在 | 完整导入链路 + 持久化 |
 | 5 | 点开书架上的书会进入阅读器，翻页后能返回书架 | 渲染 + 翻页 + 返回 |
 | 6 | 阅读进度会落盘，重开应用后从上次位置继续 | CFI 往返 + 节流落盘 |
-| 7 | 重复导入同一本书会被跳过而不是复制第二份 | 内容级去重 |
-| 8 | 目录会列出章节，点击条目后正文跳到对应章节 | 嵌套目录渲染 + 跳转确实换章 |
-| 9 | 阅读设置会落盘，重开应用后依然生效 | 设置作用到书内样式 + 节流落盘 + 重启恢复 |
-| 10 | 渲染进程的 WebCrypto 满足注解 id 生成的降级假设 | `file://` 主框架是安全上下文、`randomUUID` 与 `getRandomValues` 都在、产出的 id 落在 core 白名单内 |
-| 11 | 在正文里划线会落盘，重启后重新画回正文 | iframe 选区 → CFI → 摘录 → 乐观更新 → `annotations.json`；重启后 `ref="epubjs-hl"` 的 mark 被重新注入，且注解抽屉的类型标签带上配色名 |
-| 12 | 删掉已有的划线后，重启也不会再画回来 | `annotations:remove` 真的落盘，且列表、正文标记、存档三处一起消失 |
-| 13 | 删书会清掉这本书的注解与磁盘文件，再导入同一个文件不会复活 | `books:remove` 在主进程里按「先删书、后删注解、最后回收文件」收尾；`annotations.json` 里这本书的条目、正文标记、`books/` 下的 epub 与 `covers/` 下的封面一起消失，而同一个 sha256 仍能重新导入 |
-| 14 | 给已有的划线改色会落盘，重启后正文与列表都显示新颜色 | 浮条色块 → `recolorHighlight` 原地改同一条注解（id 与 `createdAt` 不变）→ `annotations:save` 覆盖同一条 → 重启后 `epubjs-hl` 的 `fill` 属性是**新**色值、抽屉标签也换成新配色名；点回当前颜色不会多写一次盘 |
-| 15 | 书签标记落在正文页边，翻页后摘掉、翻回来重新挂上，移除书签也会摘掉 | 书签走 epub.js 的 `mark` 通道（与划线的 `highlight` 互不干扰）；`[ref="epubjs-mk"][data-bookmark="true"]` 的尺寸由 `global.css` 给出、`toBeVisible()` 顺带钉住样式表确实命中；标记在内容坐标系里，翻页被视口裁剪而不是被重画；移除书签后标记与列表同时消失 |
-| 16 | 导出把这本书的注解写成一份能认出来的文件，建议的文件名来自书名 | `annotations:export` 走「确认书籍存在 → 读存档 → 弹另存框 → 原子写盘」整条链；另存框的 `defaultPath` 确实是应用按书名清洗出来的（E2E 只把目录换成临时目录，文件名沿用应用的建议值）；文件里 `kind` / `version` / `book.title` 正确，条目数与存档一致，且**不含**书库里的绝对路径（导出文件是能被转发出去的） |
-| 17 | 导出的注解能导入回来并重新画到正文上，再导入一次不会变成两份 | `annotations:import` 的完整闭环：导入后 `annotations.json` 里多出条目、正文上真的重新出现 `epubjs-mk` 标记、抽屉列表同步；同一条再导一次给出「跳过 1 条（本机已有）」且存档条数不变，钉住「按 id 去重、不覆盖已有」 |
+| 7 | TXT 书能打开、翻页、落盘进度，重启后从同一页继续 | TXT 通道的完整链路：正文由 `.reader__viewport--text` 承载（**不在 iframe 里**，与 EPUB 相反）；TXT 下目录按钮 `disabled`、没有书签按钮、注解抽屉只给一句「暂不支持」；进度落盘时 `cfi` 恒为 `null`、`chapterIndex` 是块序，重启后按 percent 反解回块内那一页 |
+| 8 | 重复导入同一本书会被跳过而不是复制第二份 | 内容级去重 |
+| 9 | 目录会列出章节，点击条目后正文跳到对应章节 | 嵌套目录渲染 + 跳转确实换章 |
+| 10 | 阅读设置会落盘，重开应用后依然生效 | 设置作用到书内样式 + 节流落盘 + 重启恢复 |
+| 11 | 渲染进程的 WebCrypto 满足注解 id 生成的降级假设 | `file://` 主框架是安全上下文、`randomUUID` 与 `getRandomValues` 都在、产出的 id 落在 core 白名单内 |
+| 12 | 在正文里划线会落盘，重启后重新画回正文 | iframe 选区 → CFI → 摘录 → 乐观更新 → `annotations.json`；重启后 `ref="epubjs-hl"` 的 mark 被重新注入，且注解抽屉的类型标签带上配色名 |
+| 13 | 删掉已有的划线后，重启也不会再画回来 | `annotations:remove` 真的落盘，且列表、正文标记、存档三处一起消失 |
+| 14 | 删书会清掉这本书的注解与磁盘文件，再导入同一个文件不会复活 | `books:remove` 在主进程里按「先删书、后删注解、最后回收文件」收尾；`annotations.json` 里这本书的条目、正文标记、`books/` 下的 epub 与 `covers/` 下的封面一起消失，而同一个 sha256 仍能重新导入 |
+| 15 | 给已有的划线改色会落盘，重启后正文与列表都显示新颜色 | 浮条色块 → `recolorHighlight` 原地改同一条注解（id 与 `createdAt` 不变）→ `annotations:save` 覆盖同一条 → 重启后 `epubjs-hl` 的 `fill` 属性是**新**色值、抽屉标签也换成新配色名；点回当前颜色不会多写一次盘 |
+| 16 | 书签标记落在正文页边，翻页后摘掉、翻回来重新挂上，移除书签也会摘掉 | 书签走 epub.js 的 `mark` 通道（与划线的 `highlight` 互不干扰）；`[ref="epubjs-mk"][data-bookmark="true"]` 的尺寸由 `global.css` 给出、`toBeVisible()` 顺带钉住样式表确实命中；标记在内容坐标系里，翻页被视口裁剪而不是被重画；移除书签后标记与列表同时消失 |
+| 17 | 导出把这本书的注解写成一份能认出来的文件，建议的文件名来自书名 | `annotations:export` 走「确认书籍存在 → 读存档 → 弹另存框 → 原子写盘」整条链；另存框的 `defaultPath` 确实是应用按书名清洗出来的（E2E 只把目录换成临时目录，文件名沿用应用的建议值）；文件里 `kind` / `version` / `book.title` 正确，条目数与存档一致，且**不含**书库里的绝对路径（导出文件是能被转发出去的） |
+| 18 | 导出的注解能导入回来并重新画到正文上，再导入一次不会变成两份 | `annotations:import` 的完整闭环：导入后 `annotations.json` 里多出条目、正文上真的重新出现 `epubjs-mk` 标记、抽屉列表同步；同一条再导一次给出「跳过 1 条（本机已有）」且存档条数不变，钉住「按 id 去重、不覆盖已有」 |
 
 E2E 基础设施的三个要点：
 
@@ -749,15 +783,15 @@ E2E 基础设施的三个要点：
 2. **原生文件选择框无法自动化**，所以在主进程里替换 `dialog.showOpenDialog` / `showSaveDialog` 的返回值。另存框的 stub 只换目录、**沿用应用建议的文件名**：书名清洗本身就是要验证的行为，测试自己起名会把这一步整段绕过去。
 3. **正文在 iframe 里**，且转场期间新旧两章会同时存在，所以收集正文时要遍历全部非主 frame 并 join；断言字号则读 `body` 的内联 `style`。
 
-第 10 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
+第 11 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
 
-第 11、12、14 条是这几条注解用例最值钱的地方：**它们是唯一能证明「界面 → IPC → 磁盘 → 重启 → 界面」整条链真的通了的测试**。单测里 epub.js 被 `fakeEpub` 整个换掉，也就顺带把「选区事件到底由谁发、CFI 长什么样、mark 到底挂在哪个文档」全部假设掉了；而这三件事恰好都是靠读源码才确认下来的（见第 10 章）。三条用例各有一次 `page.reload()`，重启后的断言不再依赖任何内存状态。
+第 12、13、15 条是这几条注解用例最值钱的地方：**它们是唯一能证明「界面 → IPC → 磁盘 → 重启 → 界面」整条链真的通了的测试**。单测里 epub.js 被 `fakeEpub` 整个换掉，也就顺带把「选区事件到底由谁发、CFI 长什么样、mark 到底挂在哪个文档」全部假设掉了；而这三件事恰好都是靠读源码才确认下来的（见第 10 章）。三条用例各有一次 `page.reload()`，重启后的断言不再依赖任何内存状态。
 
-第 14 条还钉住了一件单测钉不住的事：**改色后的色值真的落到了 SVG 属性上**。epub.js 把 `styles` 原样交给 marks-pane，后者用 `element.setAttribute(attr, ...)` 写进去，所以 `fill` 是个可断言的真属性 —— 这条链路在单测里被 `fakeLayer.added` 记的是一份参数，只有真机才知道它最终是不是变成了 DOM 属性。
+第 15 条还钉住了一件单测钉不住的事：**改色后的色值真的落到了 SVG 属性上**。epub.js 把 `styles` 原样交给 marks-pane，后者用 `element.setAttribute(attr, ...)` 写进去，所以 `fill` 是个可断言的真属性 —— 这条链路在单测里被 `fakeLayer.added` 记的是一份参数，只有真机才知道它最终是不是变成了 DOM 属性。
 
 划线用例里有几个刻意的写法值得注意：选区是在 **iframe 内部**用 `Range` 建的（正文在 iframe 里，主 frame 上没有可选的文字）；建完**不派发 `selectionchange`**，靠 Chromium 自己的默认行为触发（epub.js 监听的就是这个事件），但如果换非 Chromium 内核就要显式补上；E2E 侧必须留出等待，因为 epub.js 的选区回调带 250ms 防抖。数标记时选择器落在 `.reader__viewport [ref^="epubjs-hl"]`——**mark 在宿主文档里，不在 iframe 里**，写进 iframe 里数会一直是 0。
 
-第 13 条走的是另一条容易漏掉的路径。`bookId` 是文件内容的 `sha256`，所以「删掉一本、再导入同一个文件」会拿到**同一个 id**；用例正是拿这一点当探针——主进程如果只删了书库条目而漏掉注解，旧书签与划线会在重新导入后原样回到界面上。它同时钉住了顺序：反序（先删注解、再删书）在删书失败时会留下「书还在、书签与划线全没了」的真数据丢失，而正序最坏也只是留下一份孤儿注解。
+第 14 条走的是另一条容易漏掉的路径。`bookId` 是文件内容的 `sha256`，所以「删掉一本、再导入同一个文件」会拿到**同一个 id**；用例正是拿这一点当探针——主进程如果只删了书库条目而漏掉注解，旧书签与划线会在重新导入后原样回到界面上。它同时钉住了顺序：反序（先删注解、再删书）在删书失败时会留下「书还在、书签与划线全没了」的真数据丢失，而正序最坏也只是留下一份孤儿注解。
 
 这条用例的文件回收断言有两个刻意的写法。一是**删书之前先断言两个文件真的在磁盘上**，否则「删掉了」这个断言可能只是因为这两个文件从来没写出来过；二是断言用的是 `readdir` 拿到的真实文件名，而不是「目录空了」——`books/` 里可能还留着别的书。写完之后做过一次反向验证：把主进程里的回收调用停掉，这条用例会在 `books/` 那条断言上超时失败，说明它测的是回收行为本身，而不是别的什么东西顺带通过。
 
@@ -853,6 +887,7 @@ test:e2e = build && playwright test
 | 31 | `0e73176` | 功能 | 书签在正文右侧页边显示标记：新增与划线并列的 `createBookmarkMarkSyncer`，按 cfi 记账以正确处理同一 cfi 上的多条书签，并把图层 `add` 的抛错收敛为「画不上就不记账、下轮重试」；标记样式落在 `global.css` 并关掉 `pointer-events`，并补齐单测与端到端用例 |
 | 32 | `1413ac0` | 功能 | 注解交换格式与批量写入：抽出 `annotationEntry.ts` 让存档与导出共用同一份字段投影，新增 `annotationTransfer.ts`（`kind` / `version` 硬校验、书名清洗）、`planAnnotationImport` 的三步规划（重定向 → 按 id 去重 → 按容量截断）与 `saveMany` 端口（整批全有或全无，超出容量整批拒绝），并补齐单测 |
 | 33 | `6a3cc20` | 功能 | 注解导出导入接线：新增 `annotations:export` / `annotations:import` 两个频道（主进程弹对话框、读写磁盘，摘要在两头都不带路径）、`annotationFile.ts` 的 8 MB 上限与「不许写进应用数据目录」的边界、原子写盘与随机后缀临时文件，渲染层补 `AnnotationTransferProvider` 与抽屉里的导出导入入口，并补齐单测与端到端用例 |
+| 34 | `—` | 功能 | TXT 正文通道：`ReaderView` 收成按格式分派的路由，EPUB 那一套完整搬到 `EpubReaderView` 并共用新抽出的 `ReaderChrome` 外壳；新增 `decodeText.ts`（BOM → UTF-8 严格 → GB18030 回退）、`textBook.ts`（换行归一化 + 空行分块 + 块内页反解）与 `textPagination.ts`（CSS 多栏的分页算术），`TxtReaderView` 实现翻页、16 MB 上限、续读反解与「暂不支持注解」的说明，并补齐单测与端到端用例 |
 
 ### 过程中沉淀下来的经验
 
@@ -870,7 +905,8 @@ test:e2e = build && playwright test
 
 ### 当前限制
 
-- 只渲染 EPUB；TXT 虽然能识别格式与导入，但正文渲染未实现。
+- TXT 能读，但没有 cfi 这类稳定锚点，所以不开放注解（抽屉里明说，不给空列表）；也没有目录——TXT 没有格式规范可解析，只能按空行分块当章节。
+- TXT 正文上限 16 MB、单块 20 万字符，超了直接拒绝打开，不做分块懒加载。
 - 目录跳转只到章首（`display(href)` 的行为），不做段内精确定位。
 - 进度按「章节 + 页码」估算，与按字符数统计的真实进度略有偏差（已读阈值取 99.5%）。
 - 单窗口，无标签页。
@@ -880,8 +916,8 @@ test:e2e = build && playwright test
 
 ### 后续方向
 
-1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[ReaderView.tsx](src/renderer/src/reader/ReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。剩下的都是体验层：跨分栏重排后的位置修正（改字号后同一个位置的 CFI 会变，`bookmarkAt` 的精确匹配就可能加出第二条相邻书签）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+1. **TXT 的目录与编码兜底** —— 正文通道已经通了（见第 7.9 章、第 13 章第 34 轮），剩下两件：按「第 X 章」这类行文规律生成目录；解码落到最后一档（宽容 UTF-8，坏字节变 U+FFFD）时给一句「编码可能不对」的提示。
+2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[EpubReaderView.tsx](src/renderer/src/reader/EpubReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。剩下的都是体验层：跨分栏重排后的位置修正（改字号后同一个位置的 CFI 会变，`bookmarkAt` 的精确匹配就可能加出第二条相邻书签）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。

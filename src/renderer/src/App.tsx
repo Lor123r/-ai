@@ -25,6 +25,7 @@ export default function App(): React.JSX.Element {
                     <ReaderView
                       bookId={activeEntry.book.id}
                       title={activeEntry.book.title}
+                      format={activeEntry.book.format}
                       onClose={() => setActiveEntry(null)}
                     />
                   ) : (
