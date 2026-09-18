@@ -887,8 +887,8 @@ test:e2e = build && playwright test
 | 31 | `0e73176` | 功能 | 书签在正文右侧页边显示标记：新增与划线并列的 `createBookmarkMarkSyncer`，按 cfi 记账以正确处理同一 cfi 上的多条书签，并把图层 `add` 的抛错收敛为「画不上就不记账、下轮重试」；标记样式落在 `global.css` 并关掉 `pointer-events`，并补齐单测与端到端用例 |
 | 32 | `1413ac0` | 功能 | 注解交换格式与批量写入：抽出 `annotationEntry.ts` 让存档与导出共用同一份字段投影，新增 `annotationTransfer.ts`（`kind` / `version` 硬校验、书名清洗）、`planAnnotationImport` 的三步规划（重定向 → 按 id 去重 → 按容量截断）与 `saveMany` 端口（整批全有或全无，超出容量整批拒绝），并补齐单测 |
 | 33 | `6a3cc20` | 功能 | 注解导出导入接线：新增 `annotations:export` / `annotations:import` 两个频道（主进程弹对话框、读写磁盘，摘要在两头都不带路径）、`annotationFile.ts` 的 8 MB 上限与「不许写进应用数据目录」的边界、原子写盘与随机后缀临时文件，渲染层补 `AnnotationTransferProvider` 与抽屉里的导出导入入口，并补齐单测与端到端用例 |
-| 34 | `—` | 功能 | TXT 正文通道：`ReaderView` 收成按格式分派的路由，EPUB 那一套完整搬到 `EpubReaderView` 并共用新抽出的 `ReaderChrome` 外壳；新增 `decodeText.ts`（BOM → UTF-8 严格 → GB18030 回退）、`textBook.ts`（换行归一化 + 空行分块 + 块内页反解）与 `textPagination.ts`（CSS 多栏的分页算术），`TxtReaderView` 实现翻页、16 MB 上限、续读反解与「暂不支持注解」的说明，并补齐单测与端到端用例 |
-| 35 | `—` | 修复 | 书架两处观感缺陷与一处 E2E 偶发失败：`.app-body` 从横向排布改成纵向，导入结果提示不再和书架抢同一行而被压成窄竖条（实测 88px 宽，另加一条按宽度断言的端到端用例钉住）；空书架文案补上 TXT；TXT 翻页进度断言改为在页面内轮询到读数稳定，修掉「百分比由 `useEffect` 回写、点完立刻读 DOM 会拿到上一页旧值」导致的偶发失败 |
+| 34 | `27305cb` | 功能 | TXT 正文通道：`ReaderView` 收成按格式分派的路由，EPUB 那一套完整搬到 `EpubReaderView` 并共用新抽出的 `ReaderChrome` 外壳；新增 `decodeText.ts`（BOM → UTF-8 严格 → GB18030 回退）、`textBook.ts`（换行归一化 + 空行分块 + 块内页反解）与 `textPagination.ts`（CSS 多栏的分页算术），`TxtReaderView` 实现翻页、16 MB 上限、续读反解与「暂不支持注解」的说明，并补齐单测与端到端用例 |
+| 35 | `d3fa7f5` | 修复 | 书架两处观感缺陷与一处 E2E 偶发失败：`.app-body` 从横向排布改成纵向，导入结果提示不再和书架抢同一行而被压成窄竖条（实测 88px 宽，另加一条按宽度断言的端到端用例钉住）；空书架文案补上 TXT；TXT 翻页进度断言改为在页面内轮询到读数稳定，修掉「百分比由 `useEffect` 回写、点完立刻读 DOM 会拿到上一页旧值」导致的偶发失败 |
 
 ### 过程中沉淀下来的经验
 
