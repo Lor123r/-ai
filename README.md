@@ -32,7 +32,7 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 迭代轮次 | 34 |
+| 迭代轮次 | 35 |
 | 单元/组件测试 | 69 个文件 / **976** 个用例，全通过 |
 | 端到端测试 | **18** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
@@ -888,6 +888,7 @@ test:e2e = build && playwright test
 | 32 | `1413ac0` | 功能 | 注解交换格式与批量写入：抽出 `annotationEntry.ts` 让存档与导出共用同一份字段投影，新增 `annotationTransfer.ts`（`kind` / `version` 硬校验、书名清洗）、`planAnnotationImport` 的三步规划（重定向 → 按 id 去重 → 按容量截断）与 `saveMany` 端口（整批全有或全无，超出容量整批拒绝），并补齐单测 |
 | 33 | `6a3cc20` | 功能 | 注解导出导入接线：新增 `annotations:export` / `annotations:import` 两个频道（主进程弹对话框、读写磁盘，摘要在两头都不带路径）、`annotationFile.ts` 的 8 MB 上限与「不许写进应用数据目录」的边界、原子写盘与随机后缀临时文件，渲染层补 `AnnotationTransferProvider` 与抽屉里的导出导入入口，并补齐单测与端到端用例 |
 | 34 | `—` | 功能 | TXT 正文通道：`ReaderView` 收成按格式分派的路由，EPUB 那一套完整搬到 `EpubReaderView` 并共用新抽出的 `ReaderChrome` 外壳；新增 `decodeText.ts`（BOM → UTF-8 严格 → GB18030 回退）、`textBook.ts`（换行归一化 + 空行分块 + 块内页反解）与 `textPagination.ts`（CSS 多栏的分页算术），`TxtReaderView` 实现翻页、16 MB 上限、续读反解与「暂不支持注解」的说明，并补齐单测与端到端用例 |
+| 35 | `—` | 修复 | 书架两处观感缺陷与一处 E2E 偶发失败：`.app-body` 从横向排布改成纵向，导入结果提示不再和书架抢同一行而被压成窄竖条（实测 88px 宽，另加一条按宽度断言的端到端用例钉住）；空书架文案补上 TXT；TXT 翻页进度断言改为在页面内轮询到读数稳定，修掉「百分比由 `useEffect` 回写、点完立刻读 DOM 会拿到上一页旧值」导致的偶发失败 |
 
 ### 过程中沉淀下来的经验
 
@@ -898,6 +899,8 @@ test:e2e = build && playwright test
 - **节流逻辑抽成泛型。** 进度和设置的节流语义完全一样，抽成 `createThrottledWriter<T>` 后两者都只是几行封装，测试也只需写一份。
 - **测试夹具用生成而非存储。** 二进制 fixture 改不动也看不懂，现场生成让「造一个畸形的 EPUB」变成一件顺手的事。
 - **生成的夹具必须字节确定。** 「现场生成」的代价是要自己保证确定性：时间戳、随机数、遍历顺序里任何一个不确定，按内容哈希判等的断言就会随机失败，而且只在跨过时间边界时复现——这类 flaky 比真 bug 更难查。
+- **布局缺陷要靠量尺寸来守。** 只断言文案的测试对布局塌陷完全无感：导入提示被挤成 88px 宽的竖条时，`toHaveText` 依然全绿。这类断言得在端到端里量 `getBoundingClientRect`，而且要先验证「把 bug 改回去它确实会红」。
+- **读 DOM 要读终值。** React 的 `useEffect` 回写是异步的，点完按钮立刻 `textContent()` 拿到的是上一帧的值。在页面内轮询到连续两次读数相同再断言，才拿得到排完版的终值。
 
 ---
 

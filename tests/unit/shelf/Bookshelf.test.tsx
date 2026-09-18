@@ -57,7 +57,7 @@ describe('Bookshelf', () => {
   it('空仓库时展示空态提示并隐藏书籍数量', async () => {
     renderShelf(new InMemoryBookRepository())
 
-    expect(await screen.findByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeInTheDocument()
+    expect(await screen.findByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeInTheDocument()
     expect(screen.queryByText(/\d+ 本/)).not.toBeInTheDocument()
   })
 

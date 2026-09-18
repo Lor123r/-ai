@@ -82,18 +82,22 @@ body {
   opacity: 0.6;
 }
 
+/* 纵向排布：提示条与书架各占一行，横排时两者会抢同一行，提示条被压成窄竖条。 */
 .app-body {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 16px;
   padding: 24px 28px;
   overflow-y: auto;
 }
 
+/* 书架就绪后内容顶到上边，不再垂直居中。 */
 .app-body[data-status='ready'] {
-  align-items: flex-start;
+  justify-content: flex-start;
 }
 
 .empty-hint {

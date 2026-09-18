@@ -14,7 +14,7 @@ describe('App', () => {
 
     expect(screen.getByRole('heading', { name: '书架' })).toBeInTheDocument()
     expect(screen.getByText('正在读取书架…')).toBeInTheDocument()
-    expect(await screen.findByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeInTheDocument()
+    expect(await screen.findByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeInTheDocument()
   })
 
   it('没有 preload 注入时降级为浏览器预览模式', async () => {

@@ -124,7 +124,7 @@ export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps):
           </p>
         ) : null}
         {status === 'ready' && entries.length === 0 ? (
-          <p className="empty-hint">书架还是空的，导入 EPUB 后就会出现在这里。</p>
+          <p className="empty-hint">书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。</p>
         ) : null}
         {status === 'ready' && entries.length > 0 ? (
           <ul className="shelf">

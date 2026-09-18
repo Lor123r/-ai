@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { _electron as electron } from 'playwright'
 import { buildEpubFile } from '../tests/support/epubFixture'
 import { highlightFill } from '../src/renderer/src/reader/highlightPalette'
@@ -81,6 +81,27 @@ async function seedBook(page: Page, id: string, title: string): Promise<void> {
   )
 }
 
+/**
+ * 读百分比标签的**终值**。
+ *
+ * 百分比由 `useEffect` 回写，点完按钮立刻读 `textContent` 会拿到上一页的旧值，
+ * 于是「翻页后百分比要变」这类断言会随渲染时机偶发失败。这里在页面内轮询到
+ * 连续两次读数相同为止 —— 百分比只随翻页单调变化，读到的就是排完版的终值。
+ */
+async function settledPercent(percent: Locator): Promise<string> {
+  return percent.evaluate(async (element) => {
+    const read = (): string => (element.textContent ?? '').trim()
+    let current = read()
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      const next = read()
+      if (next === current) return next
+      current = next
+    }
+    return current
+  })
+}
+
 /** 一条字段齐全的书签，用于验证注解走完整条 IPC 链路。 */
 function sampleAnnotation(bookId: string) {
   return {
@@ -114,7 +135,7 @@ test('应用启动后展示书架空态', async () => {
       await window.waitForLoadState('domcontentloaded')
 
       await expect(window.getByRole('heading', { name: '书架' })).toBeVisible()
-      await expect(window.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeVisible()
+      await expect(window.getByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeVisible()
       await expect(window.getByText(/^Electron \d+\.\d+\.\d+ · Chromium /)).toBeVisible()
 
       expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
@@ -134,7 +155,7 @@ test('通过 IPC 保存的书籍会落盘，并在重启后重新出现在书架
     try {
       const page = await first.firstWindow()
       await page.waitForLoadState('domcontentloaded')
-      await expect(page.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeVisible()
+      await expect(page.getByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeVisible()
 
       await seedBook(page, 'book-1', '持久化样书')
       await page.reload()
@@ -151,7 +172,7 @@ test('通过 IPC 保存的书籍会落盘，并在重启后重新出现在书架
       await page.waitForLoadState('domcontentloaded')
 
       await expect(page.getByRole('heading', { name: '持久化样书' })).toBeVisible()
-      await expect(page.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toHaveCount(0)
+      await expect(page.getByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toHaveCount(0)
     } finally {
       await second.close()
     }
@@ -236,6 +257,12 @@ test('导入 EPUB 后书籍进入书架并落盘，重启后依然在书架上',
       await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
       await expect(page.getByText('刘慈欣')).toBeVisible()
       await expect(page.getByRole('status')).toHaveText('已导入 1 本')
+      // 提示条与书架在 .app-body 里各占一行；横排时提示条会被挤成窄竖条（实测 180px 宽、609px 高）。
+      const noticeWidth = await page
+        .getByRole('status')
+        .evaluate((el) => el.getBoundingClientRect().width)
+      const shelfWidth = await page.locator('.shelf').evaluate((el) => el.getBoundingClientRect().width)
+      expect(noticeWidth).toBeGreaterThan(shelfWidth * 0.9)
       await expect(page.getByText('1 本', { exact: true })).toBeVisible()
       // 封面由主进程读出后转成 data URL 交给渲染进程，绕开 file:// 的跨源限制
       await expect(page.getByRole('img', { name: '《三体》封面' })).toHaveAttribute(
@@ -427,11 +454,11 @@ test('TXT 书能打开、翻页、落盘进度，重启后从同一页继续', a
 
       const next = reader.getByRole('button', { name: '下一页' })
       for (let index = 0; index < 3; index += 1) await next.click()
-      fourthPage = ((await percent.textContent()) ?? '').trim()
+      fourthPage = await settledPercent(percent)
       expect(fourthPage).not.toBe('0%')
 
       await next.click()
-      fifthPage = ((await percent.textContent()) ?? '').trim()
+      fifthPage = await settledPercent(percent)
       expect(fifthPage).not.toBe(fourthPage)
 
       // 往回翻一页要能精确落回上一页，而不是退回块首
@@ -1032,7 +1059,7 @@ test('删书会清掉这本书的注解与磁盘文件，再导入同一个文�
       await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
 
       await page.getByRole('button', { name: '删除《三体》' }).click()
-      await expect(page.getByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeVisible()
+      await expect(page.getByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeVisible()
 
       // 界面上少一张卡不算数：存档里的条目与这本书的 key 都要真的消失
       await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(0)

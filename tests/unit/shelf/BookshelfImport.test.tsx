@@ -43,7 +43,7 @@ describe('书架导入入口', () => {
   it('没有导入器时不渲染导入按钮', async () => {
     renderShelf(new InMemoryBookRepository(), null)
 
-    expect(await screen.findByText('书架还是空的，导入 EPUB 后就会出现在这里。')).toBeInTheDocument()
+    expect(await screen.findByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '导入书籍' })).not.toBeInTheDocument()
   })
 
@@ -61,7 +61,7 @@ describe('书架导入入口', () => {
 
     expect(await screen.findByRole('heading', { name: '新导入的书' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('已导入 2 本')
-    expect(screen.queryByText('书架还是空的，导入 EPUB 后就会出现在这里。')).not.toBeInTheDocument()
+    expect(screen.queryByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).not.toBeInTheDocument()
   })
 
   it('用户取消选择时提示与书架都不变', async () => {
