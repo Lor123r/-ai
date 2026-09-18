@@ -330,6 +330,37 @@ body {
   cursor: pointer;
 }
 
+.reader__drawer-transfer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.reader__drawer-transfer button {
+  flex: 1 1 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* 列表为空时导出是禁用的：光标要跟着变，否则用户会以为按钮坏了 */
+.reader__drawer-transfer button:disabled {
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+
+/* 占满一行，免得结果文案被挤在两个按钮中间 */
+.reader__drawer-notice {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
 .reader__drawer-empty {
   margin: 0;
   color: var(--ink-soft);

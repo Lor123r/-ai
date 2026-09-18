@@ -2,6 +2,7 @@ import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationR
 import { InMemoryBookRepository } from '@core/adapters/inMemoryBookRepository'
 import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepository'
 import type { AnnotationRepository } from '@core/ports/annotationRepository'
+import type { AnnotationTransfer } from '@core/ports/annotationTransfer'
 import type { BookCover, CoverReader } from '@core/ports/bookCover'
 import type { BookContentReader } from '@core/ports/bookContent'
 import type { BookImporter } from '@core/ports/bookImporter'
@@ -45,6 +46,14 @@ export function createFakeAnnotationRepository(): AnnotationRepository {
   return new InMemoryAnnotationRepository()
 }
 
+/** 默认交换能力什么都不做（等同用户取消），测试需要时可覆盖。 */
+export function createFakeAnnotationTransfer(
+  exportBook: AnnotationTransfer['exportBook'] = async () => null,
+  importInto: AnnotationTransfer['importInto'] = async () => null
+): AnnotationTransfer {
+  return { exportBook, importInto }
+}
+
 /** 造一个完整的 preload 桥，避免每个测试自己拼一份不完整的对象。 */
 export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): AppBridge {
   return {
@@ -54,7 +63,8 @@ export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): 
     cover: createFakeCoverReader(),
     content: createFakeContentReader(),
     settings: createFakeSettingsRepository(),
-    annotations: createFakeAnnotationRepository()
+    annotations: createFakeAnnotationRepository(),
+    annotationTransfer: createFakeAnnotationTransfer()
   }
 }
 

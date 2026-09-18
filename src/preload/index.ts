@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AppBridge } from '@shared/ipc'
-import { ANNOTATION_CHANNELS, BOOK_CHANNELS, LIBRARY_CHANNELS, SETTINGS_CHANNELS } from '@shared/ipc'
+import {
+  ANNOTATION_CHANNELS,
+  ANNOTATION_TRANSFER_CHANNELS,
+  BOOK_CHANNELS,
+  LIBRARY_CHANNELS,
+  SETTINGS_CHANNELS
+} from '@shared/ipc'
 
 const api: AppBridge = {
   versions: {
@@ -21,6 +27,10 @@ const api: AppBridge = {
     listByBook: (bookId) => ipcRenderer.invoke(ANNOTATION_CHANNELS.list, bookId),
     save: (annotation) => ipcRenderer.invoke(ANNOTATION_CHANNELS.save, annotation),
     remove: (bookId, annotationId) => ipcRenderer.invoke(ANNOTATION_CHANNELS.remove, bookId, annotationId)
+  },
+  annotationTransfer: {
+    exportBook: (bookId) => ipcRenderer.invoke(ANNOTATION_TRANSFER_CHANNELS.exportBook, bookId),
+    importInto: (bookId) => ipcRenderer.invoke(ANNOTATION_TRANSFER_CHANNELS.importInto, bookId)
   },
   library: {
     pickAndImport: () => ipcRenderer.invoke(LIBRARY_CHANNELS.import)

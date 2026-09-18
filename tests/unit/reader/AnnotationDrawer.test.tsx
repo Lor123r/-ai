@@ -13,18 +13,27 @@ function highlight(id: string, excerpt: string, percent: number): Annotation {
 
 /** 除被测字段外用默认值补齐，避免每条用例都重复写一遍无关参数。 */
 function renderDrawer(overrides: Partial<Parameters<typeof AnnotationDrawer>[0]> = {}): {
+  container: HTMLElement
   onSelect: ReturnType<typeof vi.fn>
   onRemove: ReturnType<typeof vi.fn>
   onClose: ReturnType<typeof vi.fn>
+  onExport: ReturnType<typeof vi.fn>
+  onImport: ReturnType<typeof vi.fn>
 } {
   const onSelect = vi.fn()
   const onRemove = vi.fn()
   const onClose = vi.fn()
-  render(
+  const onExport = vi.fn()
+  const onImport = vi.fn()
+  const { container } = render(
     <AnnotationDrawer
       annotations={[]}
       status="ready"
       error={null}
+      canTransfer={false}
+      transferResult={null}
+      onExport={onExport}
+      onImport={onImport}
       onSelect={onSelect}
       onRemove={onRemove}
       onClose={onClose}
@@ -32,7 +41,7 @@ function renderDrawer(overrides: Partial<Parameters<typeof AnnotationDrawer>[0]>
     />
   )
 
-  return { onSelect, onRemove, onClose }
+  return { container, onSelect, onRemove, onClose, onExport, onImport }
 }
 
 describe('AnnotationDrawer', () => {
@@ -112,5 +121,54 @@ describe('AnnotationDrawer', () => {
     const items = screen.getAllByRole('listitem')
     expect(items[0]).toHaveTextContent('后面的')
     expect(items[1]).toHaveTextContent('10% 处的书签')
+  })
+
+  it('这次运行没有交换能力时，整块导出导入都不出现', () => {
+    renderDrawer({ canTransfer: false })
+
+    expect(screen.queryByRole('button', { name: '导出注解' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '导入注解' })).not.toBeInTheDocument()
+  })
+
+  it('有交换能力时给出导出与导入两个入口', () => {
+    renderDrawer({ canTransfer: true, annotations: [bookmark('a', 0.2)] })
+
+    expect(screen.getByRole('button', { name: '导出注解' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '导入注解' })).toBeEnabled()
+  })
+
+  it('没有注解可导时按钮留着但禁用，让用户知道这个能力存在', () => {
+    renderDrawer({ canTransfer: true, annotations: [] })
+
+    expect(screen.getByRole('button', { name: '导出注解' })).toBeDisabled()
+    // 导入是把别人的注解拿进来，空列表照样该能点
+    expect(screen.getByRole('button', { name: '导入注解' })).toBeEnabled()
+  })
+
+  it('两个按钮各自回调，不互相牵连', () => {
+    const { onExport, onImport } = renderDrawer({
+      canTransfer: true,
+      annotations: [bookmark('a', 0.2)]
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '导出注解' }))
+    expect(onExport).toHaveBeenCalledTimes(1)
+    expect(onImport).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '导入注解' }))
+    expect(onImport).toHaveBeenCalledTimes(1)
+    expect(onExport).toHaveBeenCalledTimes(1)
+  })
+
+  it('有结果文案时显示在按钮下面', () => {
+    renderDrawer({ canTransfer: true, transferResult: '已导出 3 条注解' })
+
+    expect(screen.getByText('已导出 3 条注解')).toBeInTheDocument()
+  })
+
+  it('没有结果文案时不留下一个空段落', () => {
+    const { container } = renderDrawer({ canTransfer: true })
+
+    expect(container.querySelector('.reader__drawer-notice')).toBeNull()
   })
 })

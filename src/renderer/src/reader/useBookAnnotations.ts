@@ -10,6 +10,9 @@ import {
   type HighlightColor
 } from '@core/domain/annotation'
 import { useAnnotationRepository } from '@renderer/data/AnnotationRepositoryProvider'
+import { useAnnotationTransfer } from '@renderer/data/AnnotationTransferProvider'
+import type { ImportAnnotationsSummary } from '@core/ports/annotationTransfer'
+import { ANNOTATION_EXPORT_BOUNDARY_MESSAGE, ANNOTATION_FILE_INVALID_MESSAGE } from '@shared/ipc'
 import { createAnnotationId } from './annotationId'
 
 export type AnnotationListStatus = 'loading' | 'ready' | 'error'
@@ -25,6 +28,10 @@ export const ANNOTATION_SAVE_FAILED_MESSAGE = '保存失败，请重试'
 
 /** 上限打满要单独说清楚，否则用户只会看到一句「保存失败」而无从下手。 */
 export const ANNOTATION_LIMIT_MESSAGE = `这本书的注解已达上限（${MAX_ANNOTATIONS_PER_BOOK} 条）`
+
+/** 导出 / 导入的兜底文案。与读写分开，用户才知道是笔记出问题了还是文件出问题了。 */
+export const ANNOTATION_EXPORT_FAILED_MESSAGE = '导出失败，请重试'
+export const ANNOTATION_IMPORT_FAILED_MESSAGE = '导入失败，请重试'
 
 /**
  * 主进程仓储打满上限时抛出的原文（超过这个数才允许再存一条）。
@@ -60,11 +67,21 @@ export interface UseBookAnnotationsResult {
   error: string | null
   /** 最近一次写失败的文案；每次新的写操作开始时会清回 null。 */
   failure: string | null
+  /** 这次运行有没有注解交换能力（浏览器预览没有）。没有时界面要隐藏导出导入入口。 */
+  canTransfer: boolean
+  /** 最近一次导出 / 导入的结果文案，与 failure 互不影响。 */
+  transferResult: string | null
   addBookmark: (target: AnnotationTarget) => Promise<void>
   addHighlight: (target: HighlightTarget) => Promise<void>
   /** 换掉一条划线的配色。原地改同一条注解，id / createdAt 都不变。 */
   setHighlightColor: (annotation: HighlightAnnotation, color: HighlightColor) => Promise<void>
   removeAnnotation: (annotation: Annotation) => Promise<void>
+  /** 导出这本书的全部注解。用户取消另存框时静默返回。 */
+  exportAnnotations: () => Promise<void>
+  /** 导入一份注解文件到这本书。只增不删，完成后自动重载列表。 */
+  importAnnotations: () => Promise<void>
+  /** 重新从存档载入本书注解，不清空当前列表。 */
+  reload: () => Promise<void>
 }
 
 function toMessage(caught: unknown): string {
@@ -78,6 +95,27 @@ function saveFailureMessage(caught: unknown): string {
 }
 
 /**
+ * 把五段计数串成一句话，只留非零的部分。
+ *
+ * 「新增 0 条；跳过 0 条；丢弃 0 条」这种逐项罗列等于什么都没说，用户还得自己从一串
+ * 零里读出「这文件里没有一条能用的」。全为零时就给一句明确的话。
+ *
+ * 四个数各自对应完全相反的处置动作（跳过＝文件对、本机已有；丢弃＝文件有坏条目；
+ * 达到上限＝书架满了，得先删几条），所以混成一句「丢弃 N 条」是不行的。
+ */
+function describeImport(summary: ImportAnnotationsSummary): string {
+  const parts: string[] = []
+
+  if (summary.added > 0) parts.push(`新增 ${summary.added} 条`)
+  if (summary.skipped > 0) parts.push(`跳过 ${summary.skipped} 条（本机已有）`)
+  if (summary.dropped > 0) parts.push(`丢弃 ${summary.dropped} 条（数据不合法）`)
+  if (summary.trimmed > 0) parts.push(`${summary.trimmed} 条因达到上限未导入`)
+
+  const base = parts.length > 0 ? parts.join('；') : '文件里没有可导入的注解'
+  return summary.fromOtherBook ? `${base}。这份文件导出自另一本书` : base
+}
+
+/**
  * 一本书的注解数据源。
  *
  * 读取用请求序号丢弃过期结果（快速切书时的竞态与卸载后写入都靠它挡住），
@@ -87,10 +125,12 @@ function saveFailureMessage(caught: unknown): string {
 export function useBookAnnotations(options: UseBookAnnotationsOptions): UseBookAnnotationsResult {
   const { bookId, now, createId = createAnnotationId } = options
   const repository = useAnnotationRepository()
+  const transfer = useAnnotationTransfer()
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [status, setStatus] = useState<AnnotationListStatus>('loading')
   const [error, setError] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [transferResult, setTransferResult] = useState<string | null>(null)
   const latestRequest = useRef(0)
   const mounted = useRef(true)
   /** 本地列表的同步镜像，用作乐观写入失败时的回滚快照。 */
@@ -108,36 +148,52 @@ export function useBookAnnotations(options: UseBookAnnotationsOptions): UseBookA
     }
   }, [])
 
-  useEffect(() => {
-    const requestId = latestRequest.current + 1
-    latestRequest.current = requestId
+  /**
+   * 从存档载入本书的注解。切书与导入后的重载走同一条路径，只在列表处理上分岔。
+   *
+   * `clear` 为真要先清空：换书时留着上一本的列表会让新书的界面列出别的书的书签。
+   * 导入后的重载则不能清 —— 那会让抽屉闪一下「还没有书签或划线」，而这句话在那一刻
+   * 是假的。
+   */
+  const load = useCallback(
+    async ({ clear }: { clear: boolean }) => {
+      const requestId = latestRequest.current + 1
+      latestRequest.current = requestId
 
-    // 换书时必须先清空：留着上一本的列表会让新书的界面列出别的书的书签
-    applyList([])
-    setStatus('loading')
-    setError(null)
-    setFailure(null)
+      if (clear) {
+        applyList([])
+        setStatus('loading')
+      }
+      setError(null)
 
-    void repository
-      .listByBook(bookId)
-      .then((list) => {
+      try {
+        const list = await repository.listByBook(bookId)
         if (!mounted.current || requestId !== latestRequest.current) return
 
         applyList([...list].sort(compareAnnotationsForList))
         setError(null)
         setStatus('ready')
-      })
-      .catch(() => {
+      } catch {
         if (!mounted.current || requestId !== latestRequest.current) return
 
         setError(ANNOTATIONS_UNAVAILABLE_MESSAGE)
         setStatus('error')
-      })
+      }
+    },
+    [applyList, bookId, repository]
+  )
+
+  useEffect(() => {
+    setFailure(null)
+    setTransferResult(null)
+    void load({ clear: true })
 
     return () => {
       latestRequest.current += 1
     }
-  }, [bookId, repository, applyList])
+  }, [load])
+
+  const reload = useCallback(() => load({ clear: false }), [load])
 
   /**
    * 乐观新增。整段（构造 + 写本地列表 + 落盘）包在同一个 try/catch 里：
@@ -219,14 +275,72 @@ export function useBookAnnotations(options: UseBookAnnotationsOptions): UseBookA
     [applyList, bookId, repository]
   )
 
+  /**
+   * 导出这本书的注解。
+   *
+   * 结果单独立一份状态，而不是复用 failure：成功后要能说出「导出了几条」，
+   * 否则界面毫无反应，用户根本不知道文件到底存没存下来。
+   */
+  const exportAnnotations = useCallback(async () => {
+    if (!transfer) return
+
+    setFailure(null)
+    setTransferResult(null)
+
+    try {
+      const summary = await transfer.exportBook(bookId)
+      // 用户取消另存框：什么也不说，保持上一次的提示不变
+      if (summary === null) return
+
+      setTransferResult(`已导出 ${summary.count} 条注解`)
+    } catch (caught) {
+      // 目标落在应用数据目录里是唯一一种「重试一万次也没用」的失败，
+      // 必须照原话说，好让用户去改路径而不是反复点导出
+      setFailure(
+        toMessage(caught).includes(ANNOTATION_EXPORT_BOUNDARY_MESSAGE)
+          ? ANNOTATION_EXPORT_BOUNDARY_MESSAGE
+          : ANNOTATION_EXPORT_FAILED_MESSAGE
+      )
+    }
+  }, [bookId, transfer])
+
+  const importAnnotations = useCallback(async () => {
+    if (!transfer) return
+
+    setFailure(null)
+    setTransferResult(null)
+
+    try {
+      const summary = await transfer.importInto(bookId)
+      if (summary === null) return
+
+      setTransferResult(describeImport(summary))
+      // 重载而不是把条目并进本地列表：主进程那边同时在按 id 去重、按容量截断，
+      // 在渲染层照着推算一遍等于把同一套规则写两处，迟早走散。
+      await reload()
+    } catch (caught) {
+      // 「文件挑错了」与「导入失败」分开说：前者重试没有意义，得回去换文件
+      setFailure(
+        toMessage(caught).includes(ANNOTATION_FILE_INVALID_MESSAGE)
+          ? ANNOTATION_FILE_INVALID_MESSAGE
+          : ANNOTATION_IMPORT_FAILED_MESSAGE
+      )
+    }
+  }, [bookId, reload, transfer])
+
   return {
     annotations,
     status,
     error,
     failure,
+    canTransfer: transfer !== null,
+    transferResult,
     addBookmark,
     addHighlight,
     setHighlightColor,
-    removeAnnotation
+    removeAnnotation,
+    exportAnnotations,
+    importAnnotations,
+    reload
   }
 }

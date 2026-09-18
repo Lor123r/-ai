@@ -5,9 +5,11 @@ import { DEFAULT_READER_SETTINGS } from '@core/domain/settings'
 import { createBookmark, createHighlight } from '@core/domain/annotation'
 import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
 import type { AnnotationRepository } from '@core/ports/annotationRepository'
+import type { AnnotationTransfer } from '@core/ports/annotationTransfer'
 import type { BookRepository } from '@core/ports/bookRepository'
 import type { SettingsRepository } from '@core/ports/settingsRepository'
 import { AnnotationRepositoryProvider } from '@renderer/data/AnnotationRepositoryProvider'
+import { AnnotationTransferProvider } from '@renderer/data/AnnotationTransferProvider'
 import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
 import { SettingsRepositoryProvider } from '@renderer/data/SettingsRepositoryProvider'
@@ -158,6 +160,8 @@ interface RenderOptions {
   annotationRepository?: AnnotationRepository
   reader?: { read: (bookId: string) => Promise<Uint8Array | null> } | null
   now?: () => number
+  /** 注解交换能力。默认不给：绝大多数用例关心的都不是导出导入。 */
+  transfer?: AnnotationTransfer | null
 }
 
 interface RenderResult {
@@ -166,6 +170,8 @@ interface RenderResult {
   onClose: ReturnType<typeof vi.fn>
   settings: SettingsRepository
   annotations: AnnotationRepository
+  /** 传进来的交换能力；默认没有，想断言调用就自己传一个。 */
+  transfer: AnnotationTransfer | null
 }
 
 async function renderReader(options: RenderOptions = {}): Promise<RenderResult> {
@@ -175,6 +181,7 @@ async function renderReader(options: RenderOptions = {}): Promise<RenderResult> 
   const repository = options.repository ?? (await seedRepository()).repository
   const settings = options.settingsRepository ?? new InMemorySettingsRepository()
   const annotations = options.annotationRepository ?? new InMemoryAnnotationRepository()
+  const transfer = options.transfer ?? null
   const reader =
     options.reader === undefined
       ? { read: async () => (options.bytes === undefined ? new Uint8Array([1, 2, 3]) : options.bytes) }
@@ -185,20 +192,22 @@ async function renderReader(options: RenderOptions = {}): Promise<RenderResult> 
       <BookContentReaderProvider reader={reader}>
         <SettingsRepositoryProvider repository={settings}>
           <AnnotationRepositoryProvider repository={annotations}>
-            <ReaderView
-              bookId="book-1"
-              title={options.title ?? '三体'}
-              onClose={onClose}
-              createBook={createBook}
-              now={options.now}
-            />
+            <AnnotationTransferProvider transfer={transfer}>
+              <ReaderView
+                bookId="book-1"
+                title={options.title ?? '三体'}
+                onClose={onClose}
+                createBook={createBook}
+                now={options.now}
+              />
+            </AnnotationTransferProvider>
           </AnnotationRepositoryProvider>
         </SettingsRepositoryProvider>
       </BookContentReaderProvider>
     </BookRepositoryProvider>
   )
 
-  return { epub, createBook, onClose, settings, annotations }
+  return { epub, createBook, onClose, settings, annotations, transfer }
 }
 
 describe('ReaderView', () => {
@@ -1104,5 +1113,62 @@ describe('ReaderView 书签与划线', () => {
     cleanup()
 
     expect(epub.annotations.removed).toContainEqual({ cfiRange: SELECTED_CFI, type: 'highlight' })
+  })
+
+  it('浏览器预览里没有交换能力，抽屉上就没有导出导入的入口', async () => {
+    await renderReady()
+    openAnnotations()
+
+    expect(screen.queryByRole('button', { name: '导出注解' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '导入注解' })).not.toBeInTheDocument()
+  })
+
+  it('点抽屉里的导出，把当前这本书交给主进程，成功文案紧跟在按钮下面', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createBookmark({ id: 'bm-1', bookId: 'book-1', cfi: 'epubcfi(/6/6!/4/2)', percent: 0.25 }, 0)
+    )
+    const exportBook = vi.fn(async () => ({ count: 1 }))
+    await renderReady({
+      annotationRepository: repository,
+      transfer: { exportBook, importInto: async () => null }
+    })
+
+    openAnnotations()
+    fireEvent.click(screen.getByRole('button', { name: '导出注解' }))
+
+    expect(await screen.findByText('已导出 1 条注解')).toBeInTheDocument()
+    expect(exportBook).toHaveBeenCalledWith('book-1')
+  })
+
+  it('导入完成后抽屉里就能看到新进来的那条', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    const importInto = async () => {
+      await repository.save(
+        createBookmark({ id: 'bm-imported', bookId: 'book-1', cfi: 'epubcfi(/6/6!/4/4)', percent: 0.5 }, 0)
+      )
+      return { added: 1, skipped: 0, dropped: 0, trimmed: 0, fromOtherBook: false }
+    }
+    await renderReady({
+      annotationRepository: repository,
+      transfer: { exportBook: async () => null, importInto }
+    })
+
+    openAnnotations()
+    expect(await screen.findByText('还没有书签或划线')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '导入注解' }))
+
+    expect(await screen.findByText('新增 1 条')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '50% 处的书签' })).toBeInTheDocument()
+  })
+
+  it('没有任何注解时导出是禁用的，导入照样能点', async () => {
+    await renderReady({ transfer: { exportBook: async () => null, importInto: async () => null } })
+
+    openAnnotations()
+
+    expect(screen.getByRole('button', { name: '导出注解' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '导入注解' })).toBeEnabled()
   })
 })

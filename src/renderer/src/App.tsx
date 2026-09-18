@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AnnotationRepositoryProvider } from '@renderer/data/AnnotationRepositoryProvider'
+import { AnnotationTransferProvider } from '@renderer/data/AnnotationTransferProvider'
 import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 import { BookImporterProvider } from '@renderer/data/BookImporterProvider'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
@@ -19,15 +20,17 @@ export default function App(): React.JSX.Element {
           <BookContentReaderProvider>
             <SettingsRepositoryProvider>
               <AnnotationRepositoryProvider>
-                {activeEntry ? (
-                  <ReaderView
-                    bookId={activeEntry.book.id}
-                    title={activeEntry.book.title}
-                    onClose={() => setActiveEntry(null)}
-                  />
-                ) : (
-                  <Bookshelf onOpen={setActiveEntry} />
-                )}
+                <AnnotationTransferProvider>
+                  {activeEntry ? (
+                    <ReaderView
+                      bookId={activeEntry.book.id}
+                      title={activeEntry.book.title}
+                      onClose={() => setActiveEntry(null)}
+                    />
+                  ) : (
+                    <Bookshelf onOpen={setActiveEntry} />
+                  )}
+                </AnnotationTransferProvider>
               </AnnotationRepositoryProvider>
             </SettingsRepositoryProvider>
           </BookContentReaderProvider>

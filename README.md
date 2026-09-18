@@ -32,9 +32,9 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 32 |
-| 单元/组件测试 | 61 个文件 / **807** 个用例，全通过 |
-| 端到端测试 | **15** 条 Playwright + Electron 用例，全通过 |
+| 提交数 | 33 |
+| 单元/组件测试 | 63 个文件 / **874** 个用例，全通过 |
+| 端到端测试 | **17** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
 
@@ -88,11 +88,12 @@ npm install --registry=https://registry.npmmirror.com
 | 目录 | 解析 EPUB 2 NCX 与 EPUB 3 nav，抽屉列出层级并支持点击跳转 |
 | 阅读设置 | 字号 / 行高 / 页边距 / 主题（白天·护眼·夜间）/ 字体（宋体·黑体），改动落盘并在重启后保持 |
 | 书签与划线 | 头部一键加/删书签，书签在正文右侧页边显示竖丝带标记；选中正文弹出浮条，四个色块任选一种划线颜色，选区上已有划线时可原地改色或删除；注解抽屉列出全书书签与划线（带配色名）并支持逐条删除 |
+| 注解导出导入 | 注解抽屉里把这本书的书签与划线导出成一份 JSON 文件（默认文件名取书名清洗后的结果），或把另一份这样的文件并进来：一律并到当前这本书、按 id 去重且不覆盖已有、超出容量则截断，结果只说「新增/跳过/丢弃/未导入各几条」，不显示任何路径 |
 | 容错 | 书库/注解文件损坏时备份并从空数据启动；设置损坏时静默回落默认值 |
 
 ### 明确不做（留给后续版本）
 
-TXT 正文渲染（格式识别已支持，渲染未做）、注解的导出导入、全文搜索、批注、多标签页、云同步、打包分发。
+TXT 正文渲染（格式识别已支持，渲染未做）、全文搜索、批注、多标签页、云同步、打包分发。
 
 ---
 
@@ -177,6 +178,7 @@ src/
     ipc/                #   入参校验 + 调用仓库
     storage/            #   TextStore 的文件实现、书库/设置/注解的打开与恢复
     import/             #   FileBookStore：书籍与封面复制、路径越界防护
+    transfer/           #   注解交换文件：字节上限、原子写盘、导出目标目录边界
   preload/              # contextBridge：把 IPC 封装成 window.api
   shared/ipc.ts         # 频道名常量 + AppBridge 接口（主/渲染共用的唯一真相）
   renderer/src/         # React 界面
@@ -464,6 +466,46 @@ flowchart TB
 
 ---
 
+### 7.8 导出与导入注解
+
+```mermaid
+flowchart TB
+    A["抽屉里点「导出注解」"] --> B["主进程：requireBook（没有这本书就报「书籍不存在」）"]
+    B --> C["先读存档，再弹另存框"]
+    C --> D{"用户选了路径？"}
+    D -->|取消| E["返回 null：界面保持原样，不报错"]
+    D -->|选了| F{"目标落在应用数据目录里？"}
+    F -->|是| G["AnnotationFileBoundaryError<br/>照原文说「请换一个位置」"]
+    F -->|否| H["写 target + 随机后缀 + .tmp，再 rename"]
+    H --> I["界面显示「已导出 N 条注解」"]
+    J["抽屉里点「导入注解」"] --> K["主进程：requireBook → 弹打开框"]
+    K --> L["stat 先量大小（8 MB 上限）再 readFile"]
+    L --> M{"kind / version 硬校验通过？"}
+    M -->|否| N["主进程留日志，IPC 侧只抛固定文案"]
+    M -->|是| O["importAnnotations：重定向到目标书<br/>→ 按 id 去重 → 按容量截断 → saveMany"]
+    O --> P["界面按摘要拼文案，再 reload() 重读存档"]
+```
+
+七个关键决策：
+
+1. **交换用的两个频道独立成组。** `ANNOTATION_TRANSFER_CHANNELS` 与 `ANNOTATION_CHANNELS` 分开，虽然注册在同一个 `registerAnnotationsIpc` 里（它们共用同一份 id 校验与同一个仓储，拆两个注册函数只会让「注册的频道集合」那条断言失去意义）。分开的理由是信任假设不同：那三个是「一条一条的增删查」，这两个是「整本书的一份文件」——要弹系统对话框、要按用户给的路径读写任意位置。
+2. **摘要只带计数，一个路径都不回传。** `ExportAnnotationsSummary { count }`、`ImportAnnotationsSummary { added, skipped, dropped, trimmed, fromOtherBook }`，与 `BookImportSummary` 同款。用户刚在系统对话框里亲手选的路径不需要应用再念一遍；这样「渲染进程只能拿到 `bookId`」就是结构性成立的，而不是靠对话框实现替我们保证。界面只串非零片段（`新增 2 条；跳过 1 条（本机已有）`），一条都没有时才说「文件里没有可导入的注解」。
+3. **导入一律重定向到「当前这本书」。** 文件里的 `book.id` 只作参考，条目全部按 `bookId` 归到打开抽屉的那本书上；与目标书已有注解同 id 的以**本机为准**、计入 `skipped`，绝不覆盖；整个流程**只增不删**。这也是「导入到另一本书」这种需求在本版干脆不做的原因——重定向的语义一旦有了例外，用户在界面上就无从判断自己会覆盖什么。
+4. **导出只挡「应用自己的数据目录」。** 默认目录是文档目录，但用户完全可以手动把另存框的路径改到应用数据目录里——那不叫导出，那叫拿一份手改过的文件覆盖应用自己的存档，被覆盖的是用户全部的笔记。`writeAnnotationText` 的 `requireOutside` 因此只认这一条边界（含「目标就是 root 本身」），别处一律不设限。
+5. **两种失败必须分开说。** 「文件挑错了」重试一万次也没用，「导入失败」多半重试一次就好，糊成一句话等于把用户往错的方向推。所以 `ANNOTATION_FILE_INVALID_MESSAGE` 与 `ANNOTATION_EXPORT_BOUNDARY_MESSAGE` 放在 [src/shared/ipc.ts](src/shared/ipc.ts)，主进程抛、渲染层按 `includes` 认出原文，两边必须逐字一致；具体原因（版本太新、不是 JSON）只在主进程留一条日志——IPC 传递会把 message 拼上一长串内部前缀，不适合直接给用户看。
+6. **空列表时导出按钮 `disabled` 而不是隐藏。** 按钮还在，用户就知道这个能力存在，只是现在没东西可导；`hide` 掉会让人以为导出功能没做。导入按钮则永远可点——空书里导入注解正是一个完全正常的用法。整个「导出 / 导入」那一行只在有交换能力时渲染（`canTransfer`），浏览器预览里 `createAnnotationTransfer()` 返回 `null`。
+7. **导入成功后 `reload()` 重读存档，不在渲染层把条目并进本地列表。** 主进程那边同时在按 id 去重、按容量截断，在渲染层照着推算一遍等于把同一套规则写两处，迟早走散。重载走的是**不清空列表**的那条路径：清一下会让抽屉闪出「还没有书签或划线」，而这句话在那一刻是假的。
+
+导出前先读存档（再弹另存框）不是随手排的顺序：反过来在降级会话里会白弹一次框，用户精心挑完路径才被告知存档根本读不出来。这个顺序还有个副作用——空列表照样能导出一份合法文件，这是有意的，用户想留个空档案我们也拦不着。
+
+导出走「先临时文件再改名」，与存档同款，但临时文件带**随机后缀**：同一本书连点两次导出，两个写盘过程会互相覆盖同一个 `.tmp`，最后 rename 出来的内容可能来自另一次导出。失败的清理用 `rm(tmp, { force: true }).catch(() => undefined)`——临时文件删不掉只是一点垃圾，原始错误才是用户需要看到的那一个，清理失败绝不能把它盖掉。
+
+8 MB 的导入上限（`MAX_ANNOTATION_FILE_SIZE`）落在 [annotationFile.ts](src/main/transfer/annotationFile.ts) 而不是 core：core 不得碰 fs，连 `stat` 都做不了，没有位置能拦住 `readFile`。先 `stat` 再 `read` 而不是读回来再量长度——上限的意义就是「别把一个 G 的文件读进内存」，读完才知道超了就已经白读了。
+
+另存框的默认文件名由 `annotationFileName(book.title)` 给出：书名来自可改的书库文件，完全可能是 `三体/全集` 这种在 Windows 上存不下去的名字，所以非法字符换空格、合并连续空白、掐掉结尾的点和空格（Windows 会静默丢掉它们，剩下的 `defaultPath` 和实际存下的路径对不上号），再限长 60 字符并**再掐一次尾**（截断后第 60 个字符正好落在分隔符上时，第一轮的规则已经跑过了）。洗完什么都不剩就回落 `未命名书籍-注解.json`，绝不让 `defaultPath` 变成 `.json`。
+
+---
+
 ## 8. IPC 契约
 
 频道的字符串**只在** [src/shared/ipc.ts](src/shared/ipc.ts) 里定义一次，主进程与 preload 都从这里引用，避免两边各写一份字符串写错。
@@ -485,6 +527,8 @@ flowchart TB
 | `annotations` | `annotations:list` | `bookId` | `Annotation[]` |
 | | `annotations:save` | `Annotation` | `void` |
 | | `annotations:remove` | `bookId`, `annotationId` | `void` |
+| `annotations`（交换） | `annotations:export` | `bookId` | `ExportAnnotationsSummary \| null`（取消为 `null`） |
+| | `annotations:import` | `bookId` | `ImportAnnotationsSummary \| null`（取消为 `null`） |
 
 **协议层的职责是校验，不是转发。** 所有 handler 先跑一遍 `reviveBook` / `reviveLocator` / `reviveAnnotation` / 类型检查，非法数据直接抛错，绝不写进用户书库。
 
@@ -492,6 +536,8 @@ flowchart TB
 
 - `load()`：主进程在启动时就预读过存档，渲染层再读一次只会覆盖主进程的降级决定。
 - `removeByBook()`：删书必须先删书、后删注解，这个顺序只有主进程知道；暴露给渲染层等于给「书还在、划线没了」开了个口子。渲染层的适配器（`createAnnotationRepository`）调用它会直接 reject。
+
+`AppBridge.annotationTransfer` 直接引用 core 的 `AnnotationTransfer`，只有两个方法、**两头都不带路径**：`exportBook(bookId)` 与 `importInto(bookId)` 的入参只有 `bookId`，返回的只有计数摘要。对话框在主进程弹、文件在主进程读写，渲染进程既不能指定路径也拿不到路径。这两个频道比那三个多两道闸：`requireBook` 先确认 `bookId` 指向书架上真实存在的书（否则注解会写进一份没有任何界面能列出来的孤儿存档，用户以为导入成功了，实际什么也看不到），出口则是 `readAnnotationText` 的字节上限与 `writeAnnotationText` 的目录边界。
 
 新增频道时必须三处同步（[src/shared/ipc.ts](src/shared/ipc.ts)、`src/main/ipc/*Ipc.ts`、[src/preload/index.ts](src/preload/index.ts)）。
 
@@ -507,6 +553,8 @@ return bridge?.books ?? new InMemoryBookRepository()
 ```
 
 **有 IPC 桥就持久化，没有就退化成内存实现。** 这样纯浏览器预览与单元测试都能把 UI 完整跑通。
+
+`createAnnotationTransfer()` 是这条规则的一个例外：它返回 `AnnotationTransfer | null`，没有桥时给 `null` 而不是「支持但每次调用都失败」。导出导入的每一步都要由主进程弹系统对话框，浏览器里根本无从做起，给一个点了没反应的按钮比直接不显示还糟——界面拿到 `null` 就整块隐藏这两个入口（`canTransfer`）。`AnnotationTransferProvider` 的上下文初值是 `undefined` 而不是 `null`，两者语义不同：`undefined` 是「没人注入，去探测一下」，`null` 是「确实没有这个能力」。
 
 ---
 
@@ -587,9 +635,13 @@ JSON 仓储还有一条更硬的约定：**落盘失败就回滚内存**。`Json
 
 `FileBookStore` 所有按路径操作的接口都先过 `resolveInside`：解析后的绝对路径必须以书库目录为前缀，否则一律拒绝。即使书库存档被手工篡改成 `filePath: C:\Windows\...`，也读不出书库以外的文件。
 
+**唯一一处按用户给的路径写文件的地方是注解导出**，它用的是另一套校验 `requireOutside`：目标既不能落在应用数据目录内，也不能就是它本身（`<userData>` 与其下所有路径一并拒绝），别处一律放行——导出到用户自己挑的位置正是这个功能的意义所在。两套校验的根目录方向相反，也刻意不复用：书库那边是「只许在里面」，交换文件这边是「只许在外面」，把它们合成一个带开关的函数，迟早会有人传错那个开关。
+
 ### 文件大小限制
 
 单本书上限 512 MB（`MAX_BOOK_FILE_SIZE`），防止误选超大文件把内存打满。空文件也会被拒绝。
+
+导入的注解文件上限 8 MB（`MAX_ANNOTATION_FILE_SIZE`）。注解本身很小，到这个量级只可能是选错了文件（整本电子书、视频），提前拦住比读进来再失败友好。
 
 ---
 
@@ -641,7 +693,7 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（61 文件 / 807 用例）
+### 单元测试地图（63 文件 / 874 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
@@ -649,9 +701,9 @@ return ePub(copy.buffer)
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
 | `core/adapters` | 9 | 170 | 契约测试、JSON 快照分片容错、串行化、四条写操作落盘失败时回滚内存、注解存档的宽容解析与并发写、`dropped` 的合并语义、交换格式的信封硬校验与条目投影复用、批量写入的容量边界与「一批只写一次盘」 |
 | `core/services` | 2 | 36 | 导入编排：去重、坏文件清理、书名兜底、写入书库失败时回收刚复制进来的正文与封面；注解导入的三步规划（重定向 → 按 id 去重 → 按容量截断）与报告计数 |
-| `main` | 10 | 148 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储 |
-| `renderer/data` | 5 | 15 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 与 `saveMany` 拒绝 |
-| `renderer/reader` | 15 | 198 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、选区浮条与注解抽屉 |
+| `main` | 11 | 185 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界 |
+| `renderer/data` | 6 | 19 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 与 `saveMany` 拒绝、桥缺失或没有交换能力时工厂回落为 `null` |
+| `renderer/reader` | 15 | 224 | 节流器、外观应用、目录读取、设置 hook、`ReaderView` 交互、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
@@ -669,7 +721,7 @@ return ePub(copy.buffer)
 
 它还必须**字节确定**：生成前把所有 zip 条目的时间戳统一盖成 `FIXTURE_DATE`。JSZip 默认给每个条目盖当前时间，而 zip 的 DOS 时间戳只有 2 秒精度，同一份 fixture 生成两次就会得到不同字节，一切按内容哈希判等的断言都会随机失败。注意 `zip.file` 的 `date` 选项只作用于显式添加的文件，JSZip 隐式补出的目录条目（`META-INF/`、`OEBPS/`）仍取当前时间，所以固定动作统一放在生成那一步，并由单测钉住。
 
-### 端到端测试（15 条）
+### 端到端测试（17 条）
 
 | # | 用例 | 验证的核心契约 |
 | --- | --- | --- |
@@ -688,11 +740,13 @@ return ePub(copy.buffer)
 | 13 | 删书会清掉这本书的注解与磁盘文件，再导入同一个文件不会复活 | `books:remove` 在主进程里按「先删书、后删注解、最后回收文件」收尾；`annotations.json` 里这本书的条目、正文标记、`books/` 下的 epub 与 `covers/` 下的封面一起消失，而同一个 sha256 仍能重新导入 |
 | 14 | 给已有的划线改色会落盘，重启后正文与列表都显示新颜色 | 浮条色块 → `recolorHighlight` 原地改同一条注解（id 与 `createdAt` 不变）→ `annotations:save` 覆盖同一条 → 重启后 `epubjs-hl` 的 `fill` 属性是**新**色值、抽屉标签也换成新配色名；点回当前颜色不会多写一次盘 |
 | 15 | 书签标记落在正文页边，翻页后摘掉、翻回来重新挂上，移除书签也会摘掉 | 书签走 epub.js 的 `mark` 通道（与划线的 `highlight` 互不干扰）；`[ref="epubjs-mk"][data-bookmark="true"]` 的尺寸由 `global.css` 给出、`toBeVisible()` 顺带钉住样式表确实命中；标记在内容坐标系里，翻页被视口裁剪而不是被重画；移除书签后标记与列表同时消失 |
+| 16 | 导出把这本书的注解写成一份能认出来的文件，建议的文件名来自书名 | `annotations:export` 走「确认书籍存在 → 读存档 → 弹另存框 → 原子写盘」整条链；另存框的 `defaultPath` 确实是应用按书名清洗出来的（E2E 只把目录换成临时目录，文件名沿用应用的建议值）；文件里 `kind` / `version` / `book.title` 正确，条目数与存档一致，且**不含**书库里的绝对路径（导出文件是能被转发出去的） |
+| 17 | 导出的注解能导入回来并重新画到正文上，再导入一次不会变成两份 | `annotations:import` 的完整闭环：导入后 `annotations.json` 里多出条目、正文上真的重新出现 `epubjs-mk` 标记、抽屉列表同步；同一条再导一次给出「跳过 1 条（本机已有）」且存档条数不变，钉住「按 id 去重、不覆盖已有」 |
 
 E2E 基础设施的三个要点：
 
 1. **每个用例用独立的临时数据目录**（`mkdtemp` + `EBOOK_READER_USER_DATA`），互不干扰且不污染真实书库。
-2. **原生文件选择框无法自动化**，所以在主进程里替换 `dialog.showOpenDialog` 的返回值。
+2. **原生文件选择框无法自动化**，所以在主进程里替换 `dialog.showOpenDialog` / `showSaveDialog` 的返回值。另存框的 stub 只换目录、**沿用应用建议的文件名**：书名清洗本身就是要验证的行为，测试自己起名会把这一步整段绕过去。
 3. **正文在 iframe 里**，且转场期间新旧两章会同时存在，所以收集正文时要遍历全部非主 frame 并 join；断言字号则读 `body` 的内联 `style`。
 
 第 10 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
@@ -796,6 +850,7 @@ test:e2e = build && playwright test
 | 30 | `ebd94cb` | 功能 | 浮条支持四种划线配色并原地改色：色值与中文名抽到 `highlightPalette.ts` 成为唯一归属地，浮条改为四个色块 + 常驻的「删除划线」，`recolorHighlight` 原地改同一条注解（id 与 `createdAt` 都不动），点到当前颜色零改动零写盘，并补齐单测与端到端用例 |
 | 31 | `0e73176` | 功能 | 书签在正文右侧页边显示标记：新增与划线并列的 `createBookmarkMarkSyncer`，按 cfi 记账以正确处理同一 cfi 上的多条书签，并把图层 `add` 的抛错收敛为「画不上就不记账、下轮重试」；标记样式落在 `global.css` 并关掉 `pointer-events`，并补齐单测与端到端用例 |
 | 32 | `1413ac0` | 功能 | 注解交换格式与批量写入：抽出 `annotationEntry.ts` 让存档与导出共用同一份字段投影，新增 `annotationTransfer.ts`（`kind` / `version` 硬校验、书名清洗）、`planAnnotationImport` 的三步规划（重定向 → 按 id 去重 → 按容量截断）与 `saveMany` 端口（整批全有或全无，超出容量整批拒绝），并补齐单测 |
+| 33 | `—` | 功能 | 注解导出导入接线：新增 `annotations:export` / `annotations:import` 两个频道（主进程弹对话框、读写磁盘，摘要在两头都不带路径）、`annotationFile.ts` 的 8 MB 上限与「不许写进应用数据目录」的边界、原子写盘与随机后缀临时文件，渲染层补 `AnnotationTransferProvider` 与抽屉里的导出导入入口，并补齐单测与端到端用例 |
 
 ### 过程中沉淀下来的经验
 
@@ -824,7 +879,7 @@ test:e2e = build && playwright test
 ### 后续方向
 
 1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[ReaderView.tsx](src/renderer/src/reader/ReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。剩下的都是体验层：注解的导出导入、跨分栏重排后的位置修正（改字号后同一个位置的 CFI 会变，`bookmarkAt` 的精确匹配就可能加出第二条相邻书签）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[ReaderView.tsx](src/renderer/src/reader/ReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。剩下的都是体验层：跨分栏重排后的位置修正（改字号后同一个位置的 CFI 会变，`bookmarkAt` 的精确匹配就可能加出第二条相邻书签）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。

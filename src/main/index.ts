@@ -63,19 +63,29 @@ async function startApplication(): Promise<void> {
   // 书库与删书共用同一个文件存储：两份实例各自持有一份目录校验配置，
   // 多一份就多一处可能忘记同步的地方
   const fileStore = new FileBookStore({ userDataDir })
+  // 三处都要「当前窗口」，且以后可能加第四个。抽成一个函数，免得各自演化。
+  const getWindow = (): BrowserWindow | null => BrowserWindow.getAllWindows()[0] ?? null
 
   registerBooksIpc(ipcMain, {
     repository: storage.library,
     annotations: storage.annotations,
     fileStore
   })
-  registerAnnotationsIpc(ipcMain, storage.annotations)
+  registerAnnotationsIpc(ipcMain, {
+    annotations: storage.annotations,
+    books: storage.library,
+    dialog,
+    getWindow,
+    // 另存框落在「文档」而不是桌面：导出物是用户的笔记，桌面容易被自己翻乱
+    defaultDirectory: app.getPath('documents'),
+    userDataDir
+  })
   registerSettingsIpc(ipcMain, openSettings(resolveSettingsFilePath(userDataDir)))
   registerLibraryIpc(ipcMain, {
     repository: storage.library,
     fileStore,
     dialog,
-    getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
+    getWindow
   })
   createWindow()
 

@@ -10,13 +10,18 @@ import {
   type HighlightColor
 } from '@core/domain/annotation'
 import type { AnnotationRepository } from '@core/ports/annotationRepository'
+import type { AnnotationTransfer } from '@core/ports/annotationTransfer'
 import { AnnotationRepositoryProvider } from '@renderer/data/AnnotationRepositoryProvider'
+import { AnnotationTransferProvider } from '@renderer/data/AnnotationTransferProvider'
 import {
   ANNOTATIONS_UNAVAILABLE_MESSAGE,
+  ANNOTATION_EXPORT_FAILED_MESSAGE,
+  ANNOTATION_IMPORT_FAILED_MESSAGE,
   ANNOTATION_LIMIT_MESSAGE,
   ANNOTATION_SAVE_FAILED_MESSAGE,
   useBookAnnotations
 } from '@renderer/reader/useBookAnnotations'
+import { ANNOTATION_EXPORT_BOUNDARY_MESSAGE, ANNOTATION_FILE_INVALID_MESSAGE } from '@shared/ipc'
 
 /** 固定时钟：所有注解的 createdAt 相同，列表顺序就只由 id 决定，断言不依赖真实时间。 */
 function frozenClock(): () => number {
@@ -29,9 +34,26 @@ function tickingClock(stepMs = 1000): () => number {
   return () => (value += stepMs)
 }
 
-function wrapper(repository: AnnotationRepository) {
+/**
+ * 默认注入 `transfer: null`：既有用例关心的都是读写注解，把交换能力调成「没有」
+ * 才能让它们与导出导入无关，也不会去碰 window.api。
+ */
+function wrapper(repository: AnnotationRepository, transfer: AnnotationTransfer | null = null) {
   return function Wrapper({ children }: { children: ReactNode }): React.JSX.Element {
-    return <AnnotationRepositoryProvider repository={repository}>{children}</AnnotationRepositoryProvider>
+    return (
+      <AnnotationRepositoryProvider repository={repository}>
+        <AnnotationTransferProvider transfer={transfer}>{children}</AnnotationTransferProvider>
+      </AnnotationRepositoryProvider>
+    )
+  }
+}
+
+/** 只把要用的那个方法换掉，其余保持「用户取消了」的默认行为。 */
+function fakeTransfer(overrides: Partial<AnnotationTransfer> = {}): AnnotationTransfer {
+  return {
+    exportBook: async () => null,
+    importInto: async () => null,
+    ...overrides
   }
 }
 
@@ -460,5 +482,331 @@ describe('useBookAnnotations', () => {
 
     // 仓库没有开全局 restoreMocks，spy 必须在本用例内还原
     save.mockRestore()
+  })
+
+  describe('导出', () => {
+    it('没有交换能力时如实报告，调用导出也是无操作', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      await repository.save(bookmark('a'))
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, null) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      expect(result.current.canTransfer).toBe(false)
+
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+
+      expect(result.current.transferResult).toBeNull()
+      expect(result.current.failure).toBeNull()
+    })
+
+    it('导出成功后说出条数，并把当前这本书交给主进程', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const exportBook = vi.fn(async () => ({ count: 3 }))
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ exportBook })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      expect(result.current.canTransfer).toBe(true)
+
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+
+      expect(exportBook).toHaveBeenCalledWith('book-1')
+      expect(result.current.transferResult).toBe('已导出 3 条注解')
+      expect(result.current.failure).toBeNull()
+    })
+
+    it('用户取消另存框时一声不吭，也不报错', async () => {
+      const repository = new InMemoryAnnotationRepository()
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer()) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+
+      expect(result.current.transferResult).toBeNull()
+      expect(result.current.failure).toBeNull()
+    })
+
+    it('目标落在应用数据目录里时照原话说，重试没有意义就别劝人重试', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const exportBook = async () => {
+        // IPC 会把 message 套一层前缀，所以这里的判定必须是包含匹配
+        throw new Error(
+          `Error invoking remote method 'annotations:export': Error: ${ANNOTATION_EXPORT_BOUNDARY_MESSAGE}`
+        )
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ exportBook })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+
+      expect(result.current.failure).toBe(ANNOTATION_EXPORT_BOUNDARY_MESSAGE)
+      expect(result.current.transferResult).toBeNull()
+    })
+
+    it('其它导出失败给兜底文案，不回显 IPC 原文', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const exportBook = async () => {
+        throw new Error("Error invoking remote method 'annotations:export': Error: EPERM")
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ exportBook })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+
+      expect(result.current.failure).toBe(ANNOTATION_EXPORT_FAILED_MESSAGE)
+    })
+
+    it('再次导出会先清掉上一次的结果，失败时旧结果不会赖在屏幕上', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      let failing = false
+      const exportBook = async () => {
+        if (failing) throw new Error("Error invoking remote method 'annotations:export': Error: EPERM")
+        return { count: 3 }
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ exportBook })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+      expect(result.current.transferResult).toBe('已导出 3 条注解')
+
+      failing = true
+      await act(async () => {
+        await result.current.exportAnnotations()
+      })
+
+      expect(result.current.transferResult).toBeNull()
+      expect(result.current.failure).toBe(ANNOTATION_EXPORT_FAILED_MESSAGE)
+    })
+  })
+
+  describe('导入', () => {
+    const empty = { added: 0, skipped: 0, dropped: 0, trimmed: 0, fromOtherBook: false }
+
+    async function importWith(summary: Partial<typeof empty>): Promise<string | null> {
+      const repository = new InMemoryAnnotationRepository()
+      const importInto = async () => ({ ...empty, ...summary })
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ importInto })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.importAnnotations()
+      })
+
+      expect(result.current.failure).toBeNull()
+      return result.current.transferResult
+    }
+
+    it('五段计数只串非零片段，各自的名字与处置动作对得上', async () => {
+      await expect(
+        importWith({ added: 2, skipped: 1, dropped: 1 })
+      ).resolves.toBe('新增 2 条；跳过 1 条（本机已有）；丢弃 1 条（数据不合法）')
+    })
+
+    it('达到上限没导入的条数单独说，不与「数据不合法」混为一谈', async () => {
+      await expect(importWith({ added: 1, trimmed: 2 })).resolves.toBe(
+        '新增 1 条；2 条因达到上限未导入'
+      )
+    })
+
+    it('文件导出自另一本书时补一句，否则用户会以为导入没生效', async () => {
+      await expect(importWith({ added: 1, fromOtherBook: true })).resolves.toBe(
+        '新增 1 条。这份文件导出自另一本书'
+      )
+    })
+
+    it('全为零时给一句明确的话，而不是「新增 0 条；跳过 0 条」', async () => {
+      await expect(importWith({})).resolves.toBe('文件里没有可导入的注解')
+    })
+
+    it('导入成功后自动重载列表，界面不需要自己去推算主进程的合并规则', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const importInto = async () => {
+        await repository.save(bookmark('imported'))
+        return { ...empty, added: 1 }
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ importInto })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+      expect(result.current.annotations).toEqual([])
+
+      await act(async () => {
+        await result.current.importAnnotations()
+      })
+
+      await waitFor(() => {
+        expect(result.current.annotations.map((item) => item.id)).toEqual(['imported'])
+      })
+      expect(result.current.transferResult).toBe('新增 1 条')
+    })
+
+    it('重载期间不把列表清空，否则抽屉会闪一下「还没有书签或划线」', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      await repository.save(bookmark('a'))
+      const importInto = async () => ({ ...empty, added: 0, skipped: 1 })
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ importInto })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      const pending = act(async () => {
+        await result.current.importAnnotations()
+      })
+      expect(result.current.annotations.map((item) => item.id)).toEqual(['a'])
+      expect(result.current.status).toBe('ready')
+      await pending
+    })
+
+    it('文件挑错了要照原话说，让用户回去换文件而不是反复重试', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const importInto = async () => {
+        throw new Error(
+          `Error invoking remote method 'annotations:import': Error: ${ANNOTATION_FILE_INVALID_MESSAGE}`
+        )
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ importInto })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.importAnnotations()
+      })
+
+      expect(result.current.failure).toBe(ANNOTATION_FILE_INVALID_MESSAGE)
+      expect(result.current.transferResult).toBeNull()
+    })
+
+    it('其它导入失败给兜底文案', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const importInto = async () => {
+        throw new Error("Error invoking remote method 'annotations:import': Error: EPERM")
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ importInto })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.importAnnotations()
+      })
+
+      expect(result.current.failure).toBe(ANNOTATION_IMPORT_FAILED_MESSAGE)
+    })
+
+    it('用户取消选择文件时静默返回，也不去重载', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      const listByBook = vi.spyOn(repository, 'listByBook')
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer()) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+      listByBook.mockClear()
+
+      await act(async () => {
+        await result.current.importAnnotations()
+      })
+
+      expect(result.current.transferResult).toBeNull()
+      expect(listByBook).not.toHaveBeenCalled()
+
+      listByBook.mockRestore()
+    })
+
+    it('导入失败不会顺手清掉已有列表', async () => {
+      const repository = new InMemoryAnnotationRepository()
+      await repository.save(bookmark('a'))
+      const importInto = async () => {
+        throw new Error('读文件失败')
+      }
+
+      const { result } = renderHook(
+        () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+        { wrapper: wrapper(repository, fakeTransfer({ importInto })) }
+      )
+      await waitFor(() => {
+        expect(result.current.status).toBe('ready')
+      })
+
+      await act(async () => {
+        await result.current.importAnnotations()
+      })
+
+      expect(result.current.annotations.map((item) => item.id)).toEqual(['a'])
+      expect(result.current.failure).toBe(ANNOTATION_IMPORT_FAILED_MESSAGE)
+    })
   })
 })

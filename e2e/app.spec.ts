@@ -29,6 +29,10 @@ interface BridgeWindow {
       save(annotation: unknown): Promise<void>
       remove(bookId: string, annotationId: string): Promise<void>
     }
+    annotationTransfer: {
+      exportBook(bookId: string): Promise<{ count: number } | null>
+      importInto(bookId: string): Promise<unknown | null>
+    }
   }
 }
 
@@ -37,6 +41,22 @@ async function stubFilePicker(app: Awaited<ReturnType<typeof electron.launch>>, 
   await app.evaluate(({ dialog }, paths) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: paths })
   }, filePaths)
+}
+
+/**
+ * 另存框也一样没法自动化。这里把落点换到测试目录，但**沿用应用建议的文件名** ——
+ * 那名字本身就是要验证的行为（书名得先过一遍清洗），测试自己起名就把这一步绕过去了。
+ */
+async function stubSaveDialog(app: Awaited<ReturnType<typeof electron.launch>>, dir: string): Promise<void> {
+  await app.evaluate(({ dialog }, targetDir) => {
+    dialog.showSaveDialog = (async (_window: unknown, options: { defaultPath?: string }) => {
+      const suggested = options?.defaultPath ?? 'unsaved.json'
+      return {
+        canceled: false,
+        filePath: `${targetDir}\\${suggested.split(/[\\/]/).pop() ?? 'unsaved.json'}`
+      }
+    }) as unknown as typeof dialog.showSaveDialog
+  }, dir)
 }
 
 async function seedBook(page: Page, id: string, title: string): Promise<void> {
@@ -1073,5 +1093,131 @@ test('书签标记落在正文页边，翻页后摘掉、翻回来重新挂上�
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('导出把这本书的注解写成一份能认出来的文件，建议的文件名来自书名', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+  const exportDir = await mkdtemp(join(tmpdir(), 'ebook-reader-export-'))
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      // 两枚书签落在两页上，导出的文件里才真的有多条而不是恰好一条
+      await reader.getByRole('button', { name: '加书签' }).click()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+      await reader.getByRole('button', { name: '下一页' }).click()
+      await expect.poll(() => chapterText(page)).toContain('第 2 章正文')
+      await reader.getByRole('button', { name: '加书签' }).click()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(2)
+
+      await stubSaveDialog(app, exportDir)
+      await reader.getByRole('button', { name: '注解' }).click()
+      await reader.getByRole('button', { name: '导出注解' }).click()
+      await expect(reader.getByText('已导出 2 条注解')).toBeVisible()
+
+      // 文件名由应用建议（书名清洗后 + 后缀），stub 只是把它落到测试目录里
+      const exported = join(exportDir, '三体-注解.json')
+      const payload = JSON.parse(await readFile(exported, 'utf8')) as {
+        kind: string
+        version: number
+        book: { id: string; title: string }
+        annotations: { kind: string; cfi: string }[]
+      }
+
+      expect(payload.kind).toBe('ebook-reader-annotations')
+      expect(payload.version).toBe(1)
+      expect(payload.book.title).toBe('三体')
+      // 只带 bookId，不落书库里的绝对路径 —— 导出文件是能被转发的
+      expect(JSON.stringify(payload)).not.toContain('C:/library/')
+      expect(payload.annotations).toHaveLength(2)
+      expect(payload.annotations.every((item) => item.kind === 'bookmark')).toBe(true)
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+    await rm(exportDir, { recursive: true, force: true })
+  }
+})
+
+test('导出的注解能导入回来并重新画到正文上，再导入一次不会变成两份', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+  const exportDir = await mkdtemp(join(tmpdir(), 'ebook-reader-export-'))
+  const exported = join(exportDir, '三体-注解.json')
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      const drawer = reader.getByRole('complementary', { name: '注解' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      await reader.getByRole('button', { name: '加书签' }).click()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+      await expect.poll(() => bookmarkMarkCount(page)).toBe(1)
+
+      await stubSaveDialog(app, exportDir)
+      await reader.getByRole('button', { name: '注解' }).click()
+      await reader.getByRole('button', { name: '导出注解' }).click()
+      await expect(reader.getByText('已导出 1 条注解')).toBeVisible()
+      await readFile(exported, 'utf8')
+
+      // 抽屉铺在右半屏，先收起来再去点工具条上的按钮
+      await drawer.getByRole('button', { name: '关闭注解' }).click()
+      await reader.getByRole('button', { name: '移除书签' }).click()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(0)
+      await expect.poll(() => bookmarkMarkCount(page)).toBe(0)
+
+      await stubFilePicker(app, [exported])
+      await reader.getByRole('button', { name: '注解' }).click()
+      await drawer.getByRole('button', { name: '导入注解' }).click()
+
+      await expect(drawer.getByText('新增 1 条')).toBeVisible()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+      // 重新载入后正文上要真的画回来，光有存档不算
+      await expect.poll(() => bookmarkMarkCount(page)).toBe(1)
+      await expect(drawer.getByRole('listitem')).toHaveCount(1)
+
+      // 再导入一次：同一条已经在书里了，必须跳过而不是多出一条
+      await drawer.getByRole('button', { name: '导入注解' }).click()
+      await expect(drawer.getByText('跳过 1 条（本机已有）')).toBeVisible()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+      await expect(drawer.getByRole('listitem')).toHaveCount(1)
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+    await rm(exportDir, { recursive: true, force: true })
   }
 })

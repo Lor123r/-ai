@@ -85,10 +85,14 @@ export default function ReaderView({
     status: annotationStatus,
     error: annotationError,
     failure,
+    canTransfer,
+    transferResult,
     addBookmark,
     addHighlight,
     setHighlightColor,
-    removeAnnotation
+    removeAnnotation,
+    exportAnnotations,
+    importAnnotations
   } = useBookAnnotations({ bookId, now })
   const settingsReady = settings !== null
 
@@ -402,6 +406,10 @@ export default function ReaderView({
             annotations={annotations}
             status={annotationStatus}
             error={annotationError}
+            canTransfer={canTransfer}
+            transferResult={transferResult}
+            onExport={() => void exportAnnotations()}
+            onImport={() => void importAnnotations()}
             onSelect={goToAnnotation}
             onRemove={removeAnnotation}
             onClose={() => setPanel('none')}
