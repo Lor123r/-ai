@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   normalizeExcerpt,
   type Annotation,
+  type BookmarkAnnotation,
   type HighlightAnnotation,
   type HighlightColor
 } from '@core/domain/annotation'
@@ -17,7 +18,12 @@ import SelectionToolbar, {
 } from './SelectionToolbar'
 import SettingsPanel from './SettingsPanel'
 import TocDrawer from './TocDrawer'
-import { createHighlightSyncer, type HighlightSyncer } from './annotationHighlight'
+import {
+  createBookmarkMarkSyncer,
+  createHighlightSyncer,
+  type BookmarkMarkSyncer,
+  type HighlightSyncer
+} from './annotationHighlight'
 import { createEpubBook, spineLength, type EpubBook, type EpubRendition } from './createEpubBook'
 import { readToc } from './epubToc'
 import { toRelocationInput } from './epubRelocation'
@@ -70,6 +76,7 @@ export default function ReaderView({
   const [position, setPosition] = useState<ReaderPosition | null>(null)
   const [selection, setSelection] = useState<ReaderSelection | null>(null)
   const [activeSyncer, setActiveSyncer] = useState<HighlightSyncer | null>(null)
+  const [activeBookmarkSyncer, setActiveBookmarkSyncer] = useState<BookmarkMarkSyncer | null>(null)
   const [toc, setToc] = useState<TocEntry[]>([])
   const [panel, setPanel] = useState<Panel>('none')
   const { settings, update } = useReaderSettings(settingsRepository, now)
@@ -99,6 +106,7 @@ export default function ReaderView({
     let active = true
     let writer: LocatorWriter | null = null
     let syncer: HighlightSyncer | null = null
+    let bookmarkSyncer: BookmarkMarkSyncer | null = null
     const viewport = viewportRef.current
     if (!contentReader || !viewport) {
       setStatus('error')
@@ -133,6 +141,8 @@ export default function ReaderView({
       // 图层记账表必须和 rendition 同生共死：换书后旧账还在，新图层就会被误判成「已经画过」
       syncer = createHighlightSyncer(rendition.annotations)
       setActiveSyncer(syncer)
+      bookmarkSyncer = createBookmarkMarkSyncer(rendition.annotations)
+      setActiveBookmarkSyncer(bookmarkSyncer)
 
       rendition.on('relocated', (location) => {
         if (!active) return
@@ -191,6 +201,8 @@ export default function ReaderView({
       // 先销账再拆 rendition：反过来会把 remove 打到已经销毁的图层上
       syncer?.reset()
       setActiveSyncer(null)
+      bookmarkSyncer?.reset()
+      setActiveBookmarkSyncer(null)
       renditionRef.current?.destroy()
       bookRef.current?.destroy()
       renditionRef.current = null
@@ -209,6 +221,20 @@ export default function ReaderView({
       annotations.filter((item): item is HighlightAnnotation => item.kind === 'highlight')
     )
   }, [activeSyncer, annotations])
+
+  /**
+   * 把书签标记对齐到当前注解列表。与划线一样刻意不跟 rendition —— activeBookmarkSyncer
+   * 只在 rendition 建好时置上、销毁时置空。也刻意**不跟 position**：翻页不需要重画（标记
+   * 落在内容坐标系里，跟着容器一起滚，可见性由视口的 overflow 裁剪），而 position 一旦进
+   * 依赖，每次 relocated 都会白跑一遍全表差分。
+   */
+  useEffect(() => {
+    if (!activeBookmarkSyncer) return
+
+    activeBookmarkSyncer.sync(
+      annotations.filter((item): item is BookmarkAnnotation => item.kind === 'bookmark')
+    )
+  }, [activeBookmarkSyncer, annotations])
 
   // 设置变化时重写正文样式；override 会被 epub.js 记下来，新章节也会自动套用
   useEffect(() => {

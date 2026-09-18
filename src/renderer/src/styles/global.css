@@ -276,6 +276,25 @@ body {
   min-height: 0;
 }
 
+/*
+ * 书签标记：epub.js 的 mark 产物是宿主文档里一枚绝对定位的 <a>，自带尺寸为 0，必须自己给。
+ * placeMark 给的是「栏目右边缘 − 半个栏间距」与「书签所在段落的顶部」，所以这是一条落在
+ * 栏间距里的竖丝带 —— 相邻两栏的文字都不占这块地方，既压不到正文，也盖不住划线的底色。
+ *
+ * 它落在内容坐标系里：翻页只是滚动容器，竖丝带跟着正文一起走，滚出视口就被
+ * .reader__viewport 的 overflow: hidden 裁掉，不需要任何脚本参与。
+ *
+ * pointer-events 必须显式关掉：epub.js 给 mark 无条件挂了 click 与 touchstart 监听，
+ * 不关的话这枚 <a> 会把拖选划词打断。
+ */
+[ref='epubjs-mk'][data-bookmark='true'] {
+  width: 6px;
+  height: 26px;
+  border-radius: 3px;
+  background: #c8553d;
+  pointer-events: none;
+}
+
 .reader__drawer {
   position: absolute;
   top: 0;

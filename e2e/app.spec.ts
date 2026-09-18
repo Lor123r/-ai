@@ -669,6 +669,13 @@ async function highlightMarkCount(page: Page): Promise<number> {
   return page.locator('.reader__viewport [ref^="epubjs-hl"]').count()
 }
 
+/**
+ * 正文页边上的书签标记数量。epub.js 的 mark 产物是宿主文档里一枚 ref="epubjs-mk" 的 <a>，
+ * 第三个参数 data 里的键会写成 dataset 属性 —— 靠它才能和别处的 mark 区分开。
+ */
+const bookmarkMarkCount = (page: Page): Promise<number> =>
+  page.locator('.reader__viewport [ref="epubjs-mk"][data-bookmark="true"]').count()
+
 /** 数一数注解存档里有多少条；文件还没写出来时返回 -1，交给 expect.poll 继续等。 */
 async function savedAnnotationCount(annotationsPath: string): Promise<number> {
   try {
@@ -1010,6 +1017,59 @@ test('把已有的划线换成另一种颜色，正文与存档一起换', async
       expect(await highlightMarkCount(page)).toBe(1)
     } finally {
       await third.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('书签标记落在正文页边，翻页后摘掉、翻回来重新挂上，移除书签也会摘掉', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+      expect(await bookmarkMarkCount(page)).toBe(0)
+
+      await reader.getByRole('button', { name: '加书签' }).click()
+
+      const mark = page.locator('.reader__viewport [ref="epubjs-mk"][data-bookmark="true"]')
+      await expect(mark).toHaveCount(1)
+      // epub.js 造出来的 <a> 自身尺寸是 0，只有样式表命中才有尺寸 ——
+      // 这条断言同时钉住「标记真的画在正文上」和「CSS 确实生效」
+      await expect(mark).toBeVisible()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+
+      // 样例书每章一个 spread：翻页会跨 section，旧 view 连同它的标记一起销毁
+      await reader.getByRole('button', { name: '下一页' }).click()
+      await expect.poll(() => chapterText(page)).toContain('第 2 章正文')
+      await expect.poll(() => bookmarkMarkCount(page)).toBe(0)
+
+      // 翻回来时 view 会重建，epub.js 的 hooks.render 必须把书签重新挂上去
+      await reader.getByRole('button', { name: '上一页' }).click()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+      await expect.poll(() => bookmarkMarkCount(page)).toBe(1)
+
+      await reader.getByRole('button', { name: '移除书签' }).click()
+      await expect.poll(() => bookmarkMarkCount(page)).toBe(0)
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(0)
+    } finally {
+      await app.close()
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })

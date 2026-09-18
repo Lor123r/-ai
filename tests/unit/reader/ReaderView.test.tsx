@@ -12,6 +12,7 @@ import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvi
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
 import { SettingsRepositoryProvider } from '@renderer/data/SettingsRepositoryProvider'
 import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepository'
+import { BOOKMARK_MARK_DATA, BOOKMARK_MARK_TYPE } from '@renderer/reader/annotationHighlight'
 import ReaderView from '@renderer/reader/ReaderView'
 import {
   ANNOTATIONS_UNAVAILABLE_MESSAGE,
@@ -54,7 +55,7 @@ interface FakeAnnotationLayer {
   add: EpubAnnotationLayer['add']
   remove: EpubAnnotationLayer['remove']
   /** 画过的标记，按调用顺序；断言重复 add / 孤儿 mark 就靠它。 */
-  added: { type: string; cfiRange: string; styles: object | undefined }[]
+  added: { type: string; cfiRange: string; data: object | undefined; styles: object | undefined }[]
   /** 擦过的标记，按调用顺序。 */
   removed: { cfiRange: string; type: string }[]
 }
@@ -95,8 +96,8 @@ function fakeEpub(options: FakeEpubOptions = {}): FakeEpub {
   const annotations: FakeAnnotationLayer = {
     added: [],
     removed: [],
-    add(type, cfiRange, _data, _callback, _className, styles) {
-      annotations.added.push({ type, cfiRange, styles })
+    add(type, cfiRange, data, _callback, _className, styles) {
+      annotations.added.push({ type, cfiRange, data, styles })
     },
     remove(cfiRange, type) {
       annotations.removed.push({ cfiRange, type })
@@ -667,9 +668,12 @@ describe('ReaderView 阅读设置', () => {
 })
 
 describe('ReaderView 书签与划线', () => {
+  /** LOCATION 报出的落点 cfi，也是书签标记该落在的那一条。 */
+  const LOCATION_CFI = 'epubcfi(/6/12!/4/2)'
+
   /** 一处能同时喂给书签与划线的落点，百分比固定 55%。 */
   const LOCATION: EpubRelocation = {
-    start: { index: 5, cfi: 'epubcfi(/6/12!/4/2)', displayed: { page: 6, total: 11 } },
+    start: { index: 5, cfi: LOCATION_CFI, displayed: { page: 6, total: 11 } },
     atEnd: false
   }
   const SELECTED_CFI = 'epubcfi(/6/12!/4/10)'
@@ -704,6 +708,11 @@ describe('ReaderView 书签与划线', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /书签$/ })).toBeEnabled()
     })
+  }
+
+  /** 一枚书签标记该有的三个参数：type 是 mark，data 里带样式表与 E2E 锚定的那个属性。 */
+  function paintedMark(cfiRange: string) {
+    return { type: BOOKMARK_MARK_TYPE, cfiRange, data: BOOKMARK_MARK_DATA }
   }
 
   function openAnnotations(): HTMLElement {
@@ -766,6 +775,94 @@ describe('ReaderView 书签与划线', () => {
       type: 'highlight',
       cfiRange: SELECTED_CFI,
       styles: { fill: '#4aa96c', 'fill-opacity': '0.35' }
+    })
+  })
+
+  it('打开书时把存档里的书签画到正文页边', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createBookmark(
+        { id: 'bm-1', bookId: 'book-1', cfi: LOCATION_CFI, chapterHref: 'ch1.xhtml', percent: 0.55 },
+        0
+      )
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+    expect(epub.annotations.added[0]).toMatchObject(paintedMark(LOCATION_CFI))
+  })
+
+  it('加书签后在正文页边画上一枚标记', async () => {
+    const { epub } = await renderReady()
+    await relocate(epub)
+
+    fireEvent.click(screen.getByRole('button', { name: '加书签' }))
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+    expect(epub.annotations.added[0]).toMatchObject(paintedMark(LOCATION_CFI))
+  })
+
+  it('移除书签后把页边的标记摘掉', async () => {
+    const { epub } = await renderReady()
+    await relocate(epub)
+
+    fireEvent.click(screen.getByRole('button', { name: '加书签' }))
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: '移除书签' }))
+
+    await waitFor(() => {
+      expect(epub.annotations.removed).toContainEqual({
+        cfiRange: LOCATION_CFI,
+        type: BOOKMARK_MARK_TYPE
+      })
+    })
+  })
+
+  it('划线只走 highlight 通道，不在页边上留下书签标记', async () => {
+    const { epub } = await renderReady()
+    await relocate(epub)
+
+    epub.select(SELECTED_CFI, contents())
+    fireEvent.click(await screen.findByRole('button', { name: HIGHLIGHT_COLOR_LABELS.green }))
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+    expect(epub.annotations.added.filter((call) => call.type === BOOKMARK_MARK_TYPE)).toHaveLength(0)
+  })
+
+  it('书签只走 mark 通道，不在正文里留下划线', async () => {
+    const { epub } = await renderReady()
+    await relocate(epub)
+
+    fireEvent.click(screen.getByRole('button', { name: '加书签' }))
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+    expect(epub.annotations.added.filter((call) => call.type === 'highlight')).toHaveLength(0)
+  })
+
+  it('销毁 rendition 前先摘掉书签标记，remove 必须打在还没销毁的图层上', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(createBookmark({ id: 'bm-1', bookId: 'book-1', cfi: LOCATION_CFI }, 0))
+    const { epub } = await renderReady({ annotationRepository: repository })
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+
+    cleanup()
+
+    expect(epub.annotations.removed).toContainEqual({
+      cfiRange: LOCATION_CFI,
+      type: BOOKMARK_MARK_TYPE
     })
   })
 
