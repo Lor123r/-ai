@@ -4,6 +4,7 @@ import {
   MAX_TEXT_BYTES,
   TEXT_BLOCK_MAX_CHARS,
   blockPageFromLocator,
+  blockPageFromOffset,
   normalizeNewlines,
   splitTextIntoBlocks
 } from '@core/domain/textBook'
@@ -190,5 +191,36 @@ describe('blockPageFromLocator', () => {
   it('进度越界时不产出越界页码', () => {
     expect(blockPageFromLocator({ chapterIndex: 0, percent: 5 }, 10, 4)).toBe(4)
     expect(blockPageFromLocator({ chapterIndex: 0, percent: -1 }, 10, 4)).toBe(1)
+  })
+})
+
+describe('blockPageFromOffset', () => {
+  it('偏移为 0 落在第一页', () => {
+    expect(blockPageFromOffset(0, 1000, 10)).toBe(1)
+  })
+
+  it('块内只有一页时无论偏移多深都是第一页', () => {
+    expect(blockPageFromOffset(999, 1000, 1)).toBe(1)
+  })
+
+  it('偏移量为 0 或页数为 1 时不做除零', () => {
+    expect(blockPageFromOffset(50, 0, 10)).toBe(1)
+    expect(blockPageFromOffset(0, 0, 0)).toBe(1)
+  })
+
+  it('按字符占比摊到总页数上，越靠后页码越大', () => {
+    expect(blockPageFromOffset(250, 1000, 5)).toBe(2)
+    expect(blockPageFromOffset(500, 1000, 5)).toBe(3)
+    expect(blockPageFromOffset(1000, 1000, 5)).toBe(5)
+  })
+
+  it('偏移与长度越界时夹到有效范围，不产出越界页码', () => {
+    expect(blockPageFromOffset(-10, 1000, 5)).toBe(1)
+    expect(blockPageFromOffset(99999, 1000, 5)).toBe(5)
+  })
+
+  it('非有限数值按最保守的第一页处理', () => {
+    expect(blockPageFromOffset(Number.NaN, 1000, 5)).toBe(1)
+    expect(blockPageFromOffset(10, Number.NaN, 5)).toBe(1)
   })
 })

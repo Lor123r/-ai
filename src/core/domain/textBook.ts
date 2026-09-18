@@ -125,3 +125,22 @@ export function blockPageFromLocator(
   const fraction = clampPercent(clampPercent(locator.percent) * blocks - index)
   return clampInteger(fraction * (total - 1) + 1, 1, total)
 }
+
+/**
+ * 由块内字符偏移估算落在第几页。
+ *
+ * 目录跳转要用：标题在块里的位置是精确知道的，但「第几栏」要等这一块排完版才知道，
+ * 而分栏是按视觉行分的，想精确到页就得逐行量 DOM。这里按字符占比摊到总页数上 ——
+ * 与 blockPageFromLocator 同一种近似，误差同量级。它比「一律跳到块首」强得多：
+ * 一个 20 万字符的块可以有上百页，不摊的话后面所有标题都会指到第一页。
+ */
+export function blockPageFromOffset(offset: number, blockLength: number, totalPages: number): number {
+  const total = clampInteger(totalPages, 1, Number.MAX_SAFE_INTEGER)
+  if (total <= 1) return 1
+
+  const length = clampInteger(blockLength, 0, Number.MAX_SAFE_INTEGER)
+  if (length <= 0) return 1
+
+  const at = clampInteger(offset, 0, length)
+  return clampInteger((at / length) * (total - 1) + 1, 1, total)
+}

@@ -145,6 +145,25 @@ describe('ReaderChrome', () => {
     expect(screen.queryByText(/无法打开本书/)).not.toBeInTheDocument()
   })
 
+  it('提示行默认不渲染，有值才出现，且不算错误', () => {
+    renderChrome()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    cleanup()
+    renderChrome({ notice: '正文里有字符没能正确解码' })
+    expect(screen.getByRole('status')).toHaveTextContent('正文里有字符没能正确解码')
+    // 只是提醒，正文照样能读，不该混进错误行
+    expect(screen.queryByText(/无法打开本书/)).not.toBeInTheDocument()
+    expect(document.querySelector('.reader__notice')).not.toBeNull()
+  })
+
+  it('提示行与错误行可以同时出现，互不覆盖', () => {
+    renderChrome({ notice: '编码可疑', loadError: '书籍文件不存在' })
+
+    expect(screen.getByRole('status')).toHaveTextContent('编码可疑')
+    expect(screen.getByText('无法打开本书：书籍文件不存在')).toBeInTheDocument()
+  })
+
   it('正文与额外按钮都渲染在外壳里', () => {
     renderChrome({ extraActions: <button type="button">加书签</button> })
 

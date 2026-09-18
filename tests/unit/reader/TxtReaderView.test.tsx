@@ -7,7 +7,10 @@ import { InMemorySettingsRepository } from '@core/adapters/inMemorySettingsRepos
 import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
 import { BookRepositoryProvider } from '@renderer/data/BookRepositoryProvider'
 import { SettingsRepositoryProvider } from '@renderer/data/SettingsRepositoryProvider'
-import TxtReaderView, { TXT_ANNOTATION_NOTICE } from '@renderer/reader/TxtReaderView'
+import TxtReaderView, {
+  TXT_ANNOTATION_NOTICE,
+  TXT_ENCODING_NOTICE
+} from '@renderer/reader/TxtReaderView'
 import { columnGap, columnStep } from '@renderer/reader/textPagination'
 import { seedRepository } from '../support/fakeRepository'
 
@@ -140,11 +143,11 @@ describe('TxtReaderView', () => {
     expect(viewport()).toHaveAttribute('data-status', 'ready')
   })
 
-  it('目录按钮置灰：TXT 没有导航结构', async () => {
-    await renderTxt({ text: '第一章' })
+  it('目录按钮按认出来的目录项决定可用性，TXT 不再是永远置灰', async () => {
+    await renderTxt({ text: '第一章\n\n第二章' })
     await ready()
 
-    expect(screen.getByRole('button', { name: '目录' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '目录' })).toBeEnabled()
   })
 
   it('打开成功后会更新最后打开时间', async () => {
@@ -350,6 +353,118 @@ describe('TxtReaderView 分页与进度', () => {
 
     await ready()
     expect(screen.getByRole('button', { name: '下一页' })).toBeEnabled()
+  })
+})
+
+describe('TxtReaderView 目录', () => {
+  it('抽屉里列出认出来的章节，而不是那句「这本书没有提供目录」', async () => {
+    await renderTxt({ text: '第一章 初见\n\n正文\n\n第二章 离别' })
+    await ready()
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+
+    expect(screen.getByRole('button', { name: '第一章 初见' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '第二章 离别' })).toBeInTheDocument()
+    expect(screen.queryByText('这本书没有提供目录')).not.toBeInTheDocument()
+  })
+
+  it('选中目录项后跳到对应的块，抽屉自动收起', async () => {
+    layoutColumns(2)
+    await renderTxt({ text: '第一章\n\n第二章' })
+    await ready()
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+    fireEvent.click(screen.getByRole('button', { name: '第二章' }))
+
+    await waitFor(() => {
+      expect(document.querySelector('.txt-reader__block')?.textContent).toBe('第二章')
+    })
+    expect(screen.queryByRole('button', { name: '第二章' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('阅读进度')).toHaveTextContent('50%')
+  })
+
+  it('同一块里的第二个标题按块内偏移落到块中间，不是一律回块首', async () => {
+    // 章节之间只换行不空行 → 整段就是一个块，两个标题同属一块
+    const text = `第一章 初见\n${'正文'.repeat(50)}\n第二章 离别\n正文`
+    layoutColumns(4)
+    await renderTxt({ text })
+    await ready()
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+    fireEvent.click(screen.getByRole('button', { name: '第二章 离别' }))
+
+    // 标题落在块内 108/117 处，按占比摊到 4 栏就是第 4 栏
+    await waitFor(() => {
+      expect(flow().style.transform).toBe(`translateX(${-3 * STEP}px)`)
+    })
+  })
+
+  it('一个标题都认不出来时按块首列，至少还能跳段落', async () => {
+    layoutColumns(2)
+    await renderTxt({ text: '甲段落\n\n乙段落' })
+    await ready()
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+    fireEvent.click(screen.getByRole('button', { name: '乙段落' }))
+
+    await waitFor(() => {
+      expect(document.querySelector('.txt-reader__block')?.textContent).toBe('乙段落')
+    })
+  })
+
+  it('再点一次目录就收起抽屉', async () => {
+    await renderTxt({ text: '第一章\n\n第二章' })
+    await ready()
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+    expect(screen.getByRole('button', { name: '关闭目录' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+    expect(screen.queryByRole('button', { name: '关闭目录' })).not.toBeInTheDocument()
+  })
+
+  it('还没打开成功时目录按钮不可用', async () => {
+    await renderTxt({ bytes: null })
+
+    await waitFor(() => {
+      expect(screen.getByText('打开失败')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: '目录' })).toBeDisabled()
+  })
+})
+
+describe('TxtReaderView 编码提示', () => {
+  it('正常 UTF-8 不弹提示', async () => {
+    await renderTxt({ text: '第一章' })
+    await ready()
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('坏字节解码后提示编码可能不对，但正文照旧渲染', async () => {
+    await renderTxt({ bytes: new Uint8Array([0xff, 0xff, 0x0a, 0x0a, 0xff, 0xfe]) })
+    await ready()
+
+    expect(screen.getByRole('status')).toHaveTextContent(TXT_ENCODING_NOTICE)
+    expect(document.querySelector('.txt-reader__block')).not.toBeNull()
+  })
+
+  it('GBK 文件能正常解开，不该被当成编码可疑', async () => {
+    // 「中文」的 GBK 字节
+    await renderTxt({ bytes: new Uint8Array([0xd6, 0xd0, 0xce, 0xc4]) })
+    await ready()
+
+    expect(screen.getByText('中文')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('打开失败时不留下上一次的提示', async () => {
+    await renderTxt({ bytes: null })
+
+    await waitFor(() => {
+      expect(screen.getByText('打开失败')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })
 

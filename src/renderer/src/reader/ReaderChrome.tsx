@@ -12,12 +12,14 @@ export interface ReaderChromeProps {
   percent: number | null
   /** 打开失败的原因；有值就渲染错误行。 */
   loadError?: string | null
+  /** 非致命提醒（例如「编码可能不对」）；有值就渲染提示行，不阻断阅读。 */
+  notice?: string | null
   /** 注解相关的错误文案；有值就渲染注解错误行。 */
   annotationError?: string | null
   panel: ReaderPanel
   onPanelChange: (panel: ReaderPanel) => void
   onClose: () => void
-  /** 目录是否不可用。TXT 没有导航结构，置灰而不是隐藏，免得看着像功能缺失。 */
+  /** 目录是否不可用（例如这本书一个目录项都没解析出来）。置灰而不是隐藏，免得看着像功能缺失。 */
   tocDisabled?: boolean
   /** 插在「设置」之前的额外按钮（EPUB 的加书签）。 */
   extraActions?: ReactNode
@@ -42,6 +44,7 @@ export default function ReaderChrome({
   status,
   percent,
   loadError = null,
+  notice = null,
   annotationError = null,
   panel,
   onPanelChange,
@@ -98,6 +101,11 @@ export default function ReaderChrome({
         ) : null}
       </header>
       {loadError !== null ? <p className="reader__error">无法打开本书：{loadError}</p> : null}
+      {notice !== null ? (
+        <p className="reader__notice" role="status">
+          {notice}
+        </p>
+      ) : null}
       {annotationError !== null ? (
         <p className="reader__annotation-error">{annotationError}</p>
       ) : null}

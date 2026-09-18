@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decodeTextBytes } from '@renderer/reader/decodeText'
+import { decodeText, decodeTextBytes } from '@renderer/reader/decodeText'
 
 function bytes(...values: number[]): Uint8Array {
   return new Uint8Array(values)
@@ -65,6 +65,53 @@ describe('decodeTextBytes', () => {
 
   it('换行原样保留，归一化不在这里做', () => {
     expect(decodeTextBytes(utf8('a\r\n\r\nb'))).toBe('a\r\n\r\nb')
+  })
+})
+
+describe('decodeText', () => {
+  it('回报实际用的编码，好让界面能说清按什么打开的', () => {
+    expect(decodeText(utf8('第一章')).encoding).toBe('utf-8')
+    expect(decodeText(bytes(0xd6, 0xd0, 0xce, 0xc4)).encoding).toBe('gb18030')
+    expect(decodeText(bytes(0xff, 0xfe, 0x2d, 0x4e)).encoding).toBe('utf-16le')
+    expect(decodeText(bytes(0xfe, 0xff, 0x4e, 0x2d)).encoding).toBe('utf-16be')
+  })
+
+  it('干干净净解出来的文本不算可疑，不该弹编码提示', () => {
+    expect(decodeText(utf8('第一章 三体')).uncertain).toBe(false)
+    expect(decodeText(bytes(0xd6, 0xd0, 0xce, 0xc4)).uncertain).toBe(false)
+    expect(decodeText(new Uint8Array(0)).uncertain).toBe(false)
+  })
+
+  it('坏字节变成替换字符后判为可疑，这是提示编码不对的判据', () => {
+    // 0xFF 在任何编码里都不是合法起始字节，宽容解码只能给出 U+FFFD
+    expect(decodeText(bytes(0xff, 0xff)).uncertain).toBe(true)
+  })
+
+  it('GB18030 也解不干净的混合文件同样判为可疑', () => {
+    const mixed = concat(utf8('中文'), bytes(0xff, 0xff))
+
+    expect(decodeText(mixed).uncertain).toBe(true)
+  })
+
+  it('文本本身就写了 U+FFFD 时不抛异常，只是被当成可疑（已知的多报）', () => {
+    // 宽容解码的坏字节与文件自带的 U+FFFD 长得一模一样，只有结果可以看。
+    // 输入真带替换字符的概率极小，不为它再加一级判断。
+    const decoded = decodeText(utf8('前\uFFFD后'))
+
+    expect(decoded.text).toBe('前\uFFFD后')
+    expect(decoded.uncertain).toBe(true)
+  })
+
+  it('decodeTextBytes 只是取文本的薄包装，两条路径结果一致', () => {
+    const samples = [utf8('第一章 三体'), bytes(0xd6, 0xd0, 0xce, 0xc4), bytes(0xff, 0xfe, 0x2d, 0x4e)]
+
+    for (const sample of samples) {
+      expect(decodeTextBytes(sample)).toBe(decodeText(sample).text)
+    }
+  })
+
+  it('空字节的编码标注为 utf-8，界面按它有值就放心显示', () => {
+    expect(decodeText(new Uint8Array(0))).toEqual({ text: '', encoding: 'utf-8', uncertain: false })
   })
 })
 

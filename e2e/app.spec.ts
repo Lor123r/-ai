@@ -460,8 +460,16 @@ test('TXT 书能打开、翻页、落盘进度，重启后从同一页继续', a
       await expect(reader.locator('.txt-reader__block')).toContainText('山水草木鸟兽鱼虫')
       await expect(reader.locator('.reader__viewport iframe')).toHaveCount(0)
 
-      // 没有导航结构就置灰，而不是留一个点了没反应的按钮
-      await expect(reader.getByRole('button', { name: '目录' })).toBeDisabled()
+      // TXT 没有导航文档，目录是从正文里的标题行现算的。这一本只有「第 N 段」，
+      // 认不出标题就退化成按块首列 —— 六个块就是六个条目
+      const tocButton = reader.getByRole('button', { name: '目录', exact: true })
+      await expect(tocButton).toBeEnabled()
+      await tocButton.click()
+      const drawer = reader.getByRole('complementary', { name: '目录' })
+      await expect(drawer.locator('.toc-list__item')).toHaveCount(6)
+      await drawer.getByRole('button', { name: '关闭目录' }).click()
+      await expect(drawer).toHaveCount(0)
+
       await expect(reader.getByRole('button', { name: '加书签' })).toHaveCount(0)
 
       await reader.getByRole('button', { name: '注解', exact: true }).click()
@@ -528,6 +536,94 @@ test('TXT 书能打开、翻页、落盘进度，重启后从同一页继续', a
       await expect(reader.locator('.reader__percent')).toHaveText(fifthPage)
     } finally {
       await second.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * TXT 没有导航文档，目录只能靠正文里的「第 N 章」标题行现算。这一条盯住两件事：
+ * 标题行确实被认成了目录项，且点了之后正文真的换到了那一章。
+ */
+test('TXT 的目录由标题行生成，点击条目后正文跳到对应章节', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const txtPath = join(sourceDir, '围城.txt')
+  const chapters = Array.from(
+    { length: 4 },
+    (_unused, index) => `第 ${index + 1} 章\n${'甲乙丙丁戊己庚辛'.repeat(200)}`
+  )
+  await writeFile(txtPath, chapters.join('\n\n'), 'utf8')
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [txtPath])
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await page.getByRole('button', { name: '围城', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《围城》' })
+      await expect(reader.locator('.txt-reader__block')).toContainText('第 1 章')
+
+      const drawer = reader.getByRole('complementary', { name: '目录' })
+      await reader.getByRole('button', { name: '目录', exact: true }).click()
+      await expect(drawer.locator('.toc-list__item')).toHaveText([
+        '第 1 章',
+        '第 2 章',
+        '第 3 章',
+        '第 4 章'
+      ])
+
+      await drawer.getByRole('button', { name: '第 4 章', exact: true }).click()
+
+      await expect(drawer).toHaveCount(0)
+      await expect(reader.locator('.txt-reader__block')).toContainText('第 4 章')
+      await expect(reader.locator('.txt-reader__block')).not.toContainText('第 1 章')
+      await expect(reader.locator('.reader__error')).toHaveCount(0)
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * GB18030 兜底解码是「猜」：猜对了没人知道，猜错了得说一声，否则用户看到的是
+ * 一片乱码却没有解释。这里用一个 GB18030 里非法的 0xff 逼出替换字符。
+ */
+test('TXT 编码解不干净时给出提示，正文照旧显示', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const txtPath = join(sourceDir, '残卷.txt')
+  // 「第一章」的 GB18030 字节 + 空行 + 两个 0xff（GB18030 不认这个首字节）
+  await writeFile(
+    txtPath,
+    new Uint8Array([0xb5, 0xda, 0xd2, 0xbb, 0xd5, 0xc2, 0x0a, 0x0a, 0xff, 0xff, 0x0a])
+  )
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [txtPath])
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await page.getByRole('button', { name: '残卷', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《残卷》' })
+      await expect(reader.locator('.reader__notice')).toContainText('可能不是 UTF-8')
+      // 提示不是错误：能解的字节照样显示，阅读不被打断
+      await expect(reader.locator('.reader__error')).toHaveCount(0)
+      await expect(reader.locator('.txt-reader__block')).toContainText('第一章')
+      await expect(reader.getByText('阅读中')).toBeVisible()
+    } finally {
+      await app.close()
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })

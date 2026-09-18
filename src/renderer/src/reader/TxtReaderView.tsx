@@ -1,13 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { locatorFromRelocation, type ReadingLocator } from '@core/domain/progress'
-import { MAX_TEXT_BYTES, blockPageFromLocator, splitTextIntoBlocks } from '@core/domain/textBook'
+import {
+  MAX_TEXT_BYTES,
+  blockPageFromLocator,
+  blockPageFromOffset,
+  splitTextIntoBlocks
+} from '@core/domain/textBook'
+import { generateTextToc, type TextTocEntry } from '@core/domain/textToc'
 import { useBookContentReader } from '@renderer/data/BookContentReaderProvider'
 import { useBookRepository } from '@renderer/data/BookRepositoryProvider'
 import { useSettingsRepository } from '@renderer/data/SettingsRepositoryProvider'
 import AnnotationDrawer from './AnnotationDrawer'
 import ReaderChrome, { type ReaderPanel } from './ReaderChrome'
 import SettingsPanel from './SettingsPanel'
-import { decodeTextBytes } from './decodeText'
+import TocDrawer from './TocDrawer'
+import { decodeText } from './decodeText'
 import { createLocatorWriter, type LocatorWriter } from './locatorWriter'
 import { readerAppearanceStyle, type ReaderAppearanceStyle } from './readerAppearance'
 import {
@@ -46,6 +53,20 @@ export const TXT_ANNOTATION_NOTICE =
   'TXT 书暂不支持注解：没有 cfi 这类稳定锚点，标注没法准确定位回原文。'
 
 /**
+ * 解码结果不可信时的提醒。
+ *
+ * 判据是「正文里有替换字符 U+FFFD」，而不是「落到了第几档」：宽容解码解不出的字节必然
+ * 变成 U+FFFD，所以有它就基本等于有坏字节；反过来，落到哪一档说明不了结果可不可信——
+ * 严格 UTF-8 解得开、正文里本来就写着 U+FFFD 的文件会多报一次（已知偏差，由单测钉住）。
+ *
+ * 不做「自动换一种编码重试」：能试的那几种 decodeText 已经按可靠性排过一遍了，
+ * 再猜只会把一段能看的正文换成另一段看不懂的。这里只告诉用户「有字没能还原」，
+ * 剩下的交给他（换一份文件，或者容忍这几个乱码字继续读）。
+ */
+export const TXT_ENCODING_NOTICE =
+  '正文里有字符没能正确解码（可能不是 UTF-8 也不是 GB18030），下面可能出现个别乱码字。'
+
+/**
  * TXT 正文。
  *
  * 与 EPUB 后端共用 ReaderChrome 的外壳，但正文这块没有任何共同点：没有 cfi、没有注解
@@ -65,11 +86,17 @@ export default function TxtReaderView({
   const writerRef = useRef<LocatorWriter | null>(null)
   /** 打开时读到的存档进度；等排版量出总页数后被反解使用，用完即弃。 */
   const pendingRestore = useRef<ReadingLocator | null>(null)
+  /** 目录刚跳过去的落点；同样要等排版量完才能换算成页。 */
+  const pendingJump = useRef<{ offset: number; length: number } | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [blocks, setBlocks] = useState<string[]>([])
+  const [tocEntries, setTocEntries] = useState<TextTocEntry[]>([])
   const [blockIndex, setBlockIndex] = useState(0)
   const [page, setPage] = useState(1)
+  /** 目录跳转的序号。跳到当前这一块时其它状态都不变，靠它把量算 effect 叫醒。 */
+  const [jumpSeq, setJumpSeq] = useState(0)
   const [layout, setLayout] = useState<TextLayout>(INITIAL_LAYOUT)
   const [percent, setPercent] = useState<number | null>(null)
   const [panel, setPanel] = useState<ReaderPanel>('none')
@@ -99,7 +126,8 @@ export default function TxtReaderView({
         throw new Error(`TXT 文件过大（超过 ${MAX_TEXT_BYTES / 1024 / 1024} MB），暂不支持打开`)
       }
 
-      const parsed = splitTextIntoBlocks(decodeTextBytes(bytes))
+      const decoded = decodeText(bytes)
+      const parsed = splitTextIntoBlocks(decoded.text)
       if (parsed.length === 0) throw new Error('文件里没有可显示的文本')
 
       const saved = await repository.getLocator(bookId)
@@ -114,7 +142,9 @@ export default function TxtReaderView({
       if (saved) setPercent(saved.percent)
       // TXT 没有 cfi，重开只能靠 chapterIndex 落到块首；块内页码要等量出总页数后再反解
       pendingRestore.current = saved
+      setNotice(decoded.uncertain ? TXT_ENCODING_NOTICE : null)
       setBlocks(parsed)
+      setTocEntries(generateTextToc(parsed))
       setBlockIndex(Math.min(saved?.chapterIndex ?? 0, parsed.length - 1))
       setStatus('ready')
       // 打开时间只影响书架的排序，写失败不该拦住阅读
@@ -158,11 +188,19 @@ export default function TxtReaderView({
       const totalPages = totalPagesFromScroll(element.scrollWidth, step, gap)
 
       const target = pendingRestore.current
-      if (target !== null && layout.columnWidth > 0) {
-        // 只在「打开时落的那一块」上反解：用户已经翻到别处就别再把他拽回去
-        pendingRestore.current = null
-        if (target.chapterIndex === blockIndex) {
-          setPage(blockPageFromLocator(target, blocks.length, totalPages))
+      const jump = pendingJump.current
+      if (layout.columnWidth > 0) {
+        if (jump !== null) {
+          // 块内偏移按字符占比摊到这一块的页数上：确切栏数要等这一块排完才知道，
+          // 这里给个落点，量完之后 clampPage 会把它收进这一块真实的页数里。
+          pendingJump.current = null
+          setPage(blockPageFromOffset(jump.offset, jump.length, totalPages))
+        } else if (target !== null) {
+          // 只在「打开时落的那一块」上反解：用户已经翻到别处就别再把他拽回去
+          pendingRestore.current = null
+          if (target.chapterIndex === blockIndex) {
+            setPage(blockPageFromLocator(target, blocks.length, totalPages))
+          }
         }
       }
 
@@ -180,7 +218,7 @@ export default function TxtReaderView({
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [blocks, blockIndex, layout.columnWidth, pageMargin])
+  }, [blocks, blockIndex, layout.columnWidth, pageMargin, jumpSeq])
 
   // 翻页、换块、改字号都会改变落点，统一在这里算进度并交给节流器落盘
   useEffect(() => {
@@ -227,6 +265,17 @@ export default function TxtReaderView({
     }
   }
 
+  function goToEntry(entry: TextTocEntry): void {
+    if (status !== 'ready') return
+
+    const target = blocks[entry.blockIndex] ?? ''
+    pendingJump.current = { offset: entry.offset, length: target.length }
+    setBlockIndex(entry.blockIndex)
+    setPage(1)
+    setJumpSeq((previous) => previous + 1)
+    setPanel('none')
+  }
+
   const viewportStyle: ReaderAppearanceStyle = {
     ...(settings ? readerAppearanceStyle(settings) : {}),
     '--reader-column-width': layout.columnWidth > 0 ? `${layout.columnWidth}px` : 'auto',
@@ -241,10 +290,11 @@ export default function TxtReaderView({
       status={status}
       percent={percent}
       loadError={error}
+      notice={status === 'ready' ? notice : null}
       panel={panel}
       onPanelChange={setPanel}
       onClose={onClose}
-      tocDisabled
+      tocDisabled={tocEntries.length === 0}
       onMove={move}
     >
       <div
@@ -262,6 +312,9 @@ export default function TxtReaderView({
           ) : null}
         </div>
       </div>
+      {panel === 'toc' ? (
+        <TocDrawer entries={tocEntries} onSelect={goToEntry} onClose={() => setPanel('none')} />
+      ) : null}
       {panel === 'annotations' ? (
         <AnnotationDrawer
           annotations={[]}

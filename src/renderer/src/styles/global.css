@@ -639,6 +639,19 @@ body {
   color: #a2402c;
 }
 
+/*
+ * 非致命提示：用弱化色 + 左侧色条，和红色错误行拉开距离 ——
+ * 编码可疑时正文照样能读，不该让整页看起来像打不开。
+ */
+.reader__notice {
+  margin: 0;
+  padding: 8px 24px;
+  border-left: 3px solid var(--line);
+  background: #f1ece1;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
 .book-card__author {
   margin: 0;
   color: var(--ink-soft);

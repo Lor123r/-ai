@@ -1,13 +1,22 @@
-import type { TocEntry } from '@core/domain/toc'
+import type { TocItem } from '@core/domain/toc'
 
-interface TocDrawerProps {
-  entries: TocEntry[]
-  onSelect: (entry: TocEntry) => void
+interface TocDrawerProps<TPayload extends TocItem> {
+  entries: TPayload[]
+  onSelect: (entry: TPayload) => void
   onClose: () => void
 }
 
-/** 目录抽屉。层级用缩进表达，不额外做折叠展开——MVP 的目录通常一屏就够。 */
-export default function TocDrawer({ entries, onSelect, onClose }: TocDrawerProps): React.JSX.Element {
+/**
+ * 目录抽屉。层级用缩进表达，不额外做折叠展开——MVP 的目录通常一屏就够。
+ *
+ * 对载荷泛型：抽屉只画标签与缩进，EPUB 的 href 与 TXT 的块序号都不需要它理解，
+ * 原样透传给 onSelect 即可。
+ */
+export default function TocDrawer<TPayload extends TocItem>({
+  entries,
+  onSelect,
+  onClose
+}: TocDrawerProps<TPayload>): React.JSX.Element {
   return (
     <aside className="reader__drawer" aria-label="目录">
       <div className="reader__drawer-header">

@@ -1,10 +1,20 @@
 import { isRecord } from './guards'
 
-export interface TocEntry {
+export interface TocEntry extends TocItem {
+  href: string
+}
+
+/**
+ * 目录抽屉真正用得到的最小形状。
+ *
+ * href 是 epub.js 的定位方式（相对导航文档的路径 + 片段），TXT 没有文档可以指，
+ * 靠「第几块 + 块内偏移」定位。抽屉只画标签与缩进，所以两种后端在这里汇合，
+ * 不必让 TXT 去编一个自己不用的 href。
+ */
+export interface TocItem {
   /** 列表渲染用的稳定标识；目录项本身可能没有 id，或有多项共用同一个 id。 */
   id: string
   label: string
-  href: string
   /** 嵌套层级，顶层为 0。 */
   depth: number
 }
