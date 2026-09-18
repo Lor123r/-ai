@@ -4,7 +4,9 @@ import {
   compareAnnotationsForList,
   createBookmark,
   createHighlight,
+  recolorHighlight,
   type Annotation,
+  type HighlightAnnotation,
   type HighlightColor
 } from '@core/domain/annotation'
 import { useAnnotationRepository } from '@renderer/data/AnnotationRepositoryProvider'
@@ -60,6 +62,8 @@ export interface UseBookAnnotationsResult {
   failure: string | null
   addBookmark: (target: AnnotationTarget) => Promise<void>
   addHighlight: (target: HighlightTarget) => Promise<void>
+  /** 换掉一条划线的配色。原地改同一条注解，id / createdAt 都不变。 */
+  setHighlightColor: (annotation: HighlightAnnotation, color: HighlightColor) => Promise<void>
   removeAnnotation: (annotation: Annotation) => Promise<void>
 }
 
@@ -170,6 +174,34 @@ export function useBookAnnotations(options: UseBookAnnotationsOptions): UseBookA
     [commitNew, createId, bookId, now]
   )
 
+  /**
+   * 乐观改色。与 removeAnnotation 同构：先落本地列表再落盘，失败恢复整份快照。
+   *
+   * 做的是**原地改**（recolorHighlight）而不是「删了重划」：图层按 id 记账、epub.js 的
+   * marks 表按 cfi 索引，同一 cfi 上出现两条 id 不同的划线会留下清不掉的孤儿 mark。
+   * 因为 id 与 createdAt 都没动，列表顺序不会变，这里**不需要**再 sort 一次。
+   */
+  const setHighlightColor = useCallback(
+    async (annotation: HighlightAnnotation, color: HighlightColor) => {
+      // 点到的就是当前颜色：没有改动就不落盘。与仓储里「删除不存在的 id 不写盘」
+      // 同一条约定 —— 不要把一次无意义的点击变成一次 IPC 加一次文件写。
+      if (annotation.color === color) return
+
+      setFailure(null)
+      const snapshot = current.current
+      const updated = recolorHighlight(annotation, color, now())
+      applyList(snapshot.map((item) => (item.id === updated.id ? updated : item)))
+
+      try {
+        await repository.save(updated)
+      } catch (caught) {
+        applyList(snapshot)
+        setFailure(saveFailureMessage(caught))
+      }
+    },
+    [applyList, now, repository]
+  )
+
   const removeAnnotation = useCallback(
     async (annotation: Annotation) => {
       setFailure(null)
@@ -187,5 +219,14 @@ export function useBookAnnotations(options: UseBookAnnotationsOptions): UseBookA
     [applyList, bookId, repository]
   )
 
-  return { annotations, status, error, failure, addBookmark, addHighlight, removeAnnotation }
+  return {
+    annotations,
+    status,
+    error,
+    failure,
+    addBookmark,
+    addHighlight,
+    setHighlightColor,
+    removeAnnotation
+  }
 }

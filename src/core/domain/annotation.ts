@@ -233,6 +233,23 @@ export function createHighlight(input: HighlightInput, now: number = Date.now())
 }
 
 /**
+ * 换掉一条划线的配色，其余字段一个不动。
+ *
+ * 改色必须是「原地改」而不是「删了重划」：图层同步按 id 记账，而 epub.js 的 marks
+ * 表按 cfi 索引，同一 cfi 上出现两条 id 不同的划线会让旧标记失去引用、再也擦不掉。
+ *
+ * `createdAt` 刻意保持不变（只推进 `updatedAt`）：列表按 `createdAt` 排序，
+ * 动它会让改一次颜色就把这条条目跳到列表顶端。
+ */
+export function recolorHighlight(
+  annotation: HighlightAnnotation,
+  color: HighlightColor,
+  now: number = Date.now()
+): HighlightAnnotation {
+  return { ...annotation, color: normalizeHighlightColor(color), updatedAt: now }
+}
+
+/**
  * 把未知来源的数据（磁盘存档、IPC 参数）还原为 Annotation。
  * id / bookId / kind / cfi 任一非法就返回 null 让调用方丢弃该条，
  * 其余字段逐项收敛，避免一条脏数据让整本书的注解都读不出来。

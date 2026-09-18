@@ -4,6 +4,7 @@ import { join, basename } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 import { _electron as electron } from 'playwright'
 import { buildEpubFile } from '../tests/support/epubFixture'
+import { highlightFill } from '../src/renderer/src/reader/highlightPalette'
 
 const mainEntry = join(__dirname, '..', 'out', 'main', 'index.js')
 
@@ -723,24 +724,26 @@ test('在正文里划线会落盘，重启后重新画回正文', async () => {
       expect(await selectChapterText(page)).toBe(true)
       const toolbar = reader.getByRole('toolbar', { name: '选中文字的操作' })
       await expect(toolbar).toBeVisible()
-      await toolbar.getByRole('button', { name: '划线', exact: true }).click()
+      await toolbar.getByRole('button', { name: '绿色', exact: true }).click()
 
       // 划线先落到本地列表再落到存档上，两处都要能看到才算真的画下去了
       await expect.poll(() => highlightMarkCount(page)).toBeGreaterThan(0)
       await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
 
       const snapshot = JSON.parse(await readFile(annotationsPath, 'utf8')) as {
-        annotations: { kind: string; cfi: string; excerpt: string }[]
+        annotations: { kind: string; cfi: string; excerpt: string; color: string }[]
       }
       const saved = snapshot.annotations[0]
       expect(saved?.kind).toBe('highlight')
       // 摘录与 cfi 都得来自真实的 iframe 选区，不是界面上拼出来的占位
       expect(saved?.excerpt).toBe('第 1 章正文')
       expect(saved?.cfi).toMatch(/^epubcfi\(/)
+      // 点的是哪个色块就得存下哪个颜色，不能一律回落到默认色
+      expect(saved?.color).toBe('green')
 
       await reader.getByRole('button', { name: '注解', exact: true }).click()
       const drawer = reader.getByRole('complementary', { name: '注解' })
-      await expect(drawer.locator('.annotation-list__kind')).toHaveText('划线')
+      await expect(drawer.locator('.annotation-list__kind')).toHaveText('绿色划线')
       await expect(drawer.getByRole('button', { name: '删除 第 1 章正文' })).toBeVisible()
       await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
     } finally {
@@ -758,6 +761,10 @@ test('在正文里划线会落盘，重启后重新画回正文', async () => {
 
       // 存档里的划线要在新 rendition 上重新注入，而不是只躺在列表里
       await expect.poll(() => highlightMarkCount(page)).toBeGreaterThan(0)
+      // 重新画回来的标记也要带上存档里的配色，不能一律用 epub.js 自带的黄色
+      await expect
+        .poll(() => page.locator('.reader__viewport [ref^="epubjs-hl"]').first().getAttribute('fill'))
+        .toBe(highlightFill('green'))
 
       await reader.getByRole('button', { name: '注解', exact: true }).click()
       const drawer = reader.getByRole('complementary', { name: '注解' })
@@ -797,7 +804,7 @@ test('删掉已有的划线后，重启也不会再画回来', async () => {
       expect(await selectChapterText(page)).toBe(true)
       const toolbar = reader.getByRole('toolbar', { name: '选中文字的操作' })
       await expect(toolbar).toBeVisible()
-      await toolbar.getByRole('button', { name: '划线', exact: true }).click()
+      await toolbar.getByRole('button', { name: '黄色', exact: true }).click()
       await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
 
       const seeded = JSON.parse(await readFile(annotationsPath, 'utf8')) as {
@@ -915,6 +922,94 @@ test('删书会清掉这本书的注解与磁盘文件，再导入同一个文�
       await expect(reader.locator('.reader__annotation-error')).toHaveCount(0)
     } finally {
       await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+test('把已有的划线换成另一种颜色，正文与存档一起换', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+  const annotationsPath = join(userDataDir, 'annotations.json')
+
+  /** 正文里那条划线标记的 fill：marks-pane 是逐个 setAttribute 上去的，只能读属性。 */
+  const markFill = (page: Page) =>
+    page.locator('.reader__viewport [ref^="epubjs-hl"]').first().getAttribute('fill')
+
+  try {
+    const first = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await first.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(first, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      expect(await selectChapterText(page)).toBe(true)
+      const toolbar = reader.getByRole('toolbar', { name: '选中文字的操作' })
+      await expect(toolbar).toBeVisible()
+      await toolbar.getByRole('button', { name: '黄色', exact: true }).click()
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+      await expect.poll(() => highlightMarkCount(page)).toBe(1)
+    } finally {
+      await first.close()
+    }
+
+    // 重启后再改：走的是「读存档 → 重新画回正文 → 重新选区」，而不是刚划完的内存状态
+    const second = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await second.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => highlightMarkCount(page)).toBe(1)
+
+      expect(await selectChapterText(page)).toBe(true)
+      const toolbar = reader.getByRole('toolbar', { name: '选中文字的操作' })
+      await expect(toolbar).toBeVisible()
+      // 「删除划线」可点，说明这段选区被认成了已有划线；下面点色块走的是改色而不是新建
+      await expect(toolbar.getByRole('button', { name: '删除划线', exact: true })).toBeEnabled()
+      await toolbar.getByRole('button', { name: '蓝色', exact: true }).click()
+
+      // 先等新配色真的画上去，再数标记条数：这时若旧标记没被擦掉就会是 2
+      await expect.poll(() => markFill(page)).toBe(highlightFill('blue'))
+      expect(await highlightMarkCount(page)).toBe(1)
+
+      // 存档里还是同一条，只是配色换了；改色要是「删了重划」这里会变成 2
+      await expect.poll(() => savedAnnotationCount(annotationsPath)).toBe(1)
+      const snapshot = JSON.parse(await readFile(annotationsPath, 'utf8')) as {
+        annotations: { color: string }[]
+      }
+      expect(snapshot.annotations[0]?.color).toBe('blue')
+    } finally {
+      await second.close()
+    }
+
+    const third = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await third.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await page.getByRole('button', { name: '三体', exact: true }).click()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await expect(reader.getByText('阅读中')).toBeVisible()
+
+      // 换过的颜色要真的落进了存档，而不是只在这一次会话里生效
+      await expect.poll(() => markFill(page)).toBe(highlightFill('blue'))
+      expect(await highlightMarkCount(page)).toBe(1)
+    } finally {
+      await third.close()
     }
   } finally {
     await rm(userDataDir, { recursive: true, force: true })

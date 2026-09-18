@@ -1,5 +1,6 @@
 import type { Annotation } from '@core/domain/annotation'
 import { formatPercentLabel } from '@core/domain/progress'
+import { HIGHLIGHT_COLOR_LABELS } from './highlightPalette'
 import type { AnnotationListStatus } from './useBookAnnotations'
 
 interface AnnotationDrawerProps {
@@ -12,8 +13,14 @@ interface AnnotationDrawerProps {
   onClose: () => void
 }
 
+/**
+ * 列表里的类型标签。划线带上配色名（「绿色划线」），因为换色后列表上光看摘录
+ * 看不出正文里到底是哪一种颜色，删错一条的概率就上来了。
+ */
 function kindLabel(annotation: Annotation): string {
-  return annotation.kind === 'highlight' ? '划线' : '书签'
+  return annotation.kind === 'highlight'
+    ? `${HIGHLIGHT_COLOR_LABELS[annotation.color]}划线`
+    : '书签'
 }
 
 /** 列表条目的可见文案：有摘录就用摘录，否则用「进度 + 类型」占位，绝不留空白按钮。 */

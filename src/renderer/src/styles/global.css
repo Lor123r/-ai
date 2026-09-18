@@ -360,8 +360,14 @@ body {
   box-shadow: 0 6px 18px rgb(0 0 0 / 16%);
 }
 
-.selection-toolbar button {
-  padding: 4px 10px;
+/*
+ * 文字按钮（删除划线 / 取消）。必须把色块排除在外：色块是从内联样式来的固定
+ * 24×24 方形，「padding: 4px 10px」与悬停底色都会把它撑变形、盖掉色值。
+ * 浮条宽度在 TOOLBAR_WIDTH 里按 24px 逐项算过，这里改数字要同步过去。
+ */
+.selection-toolbar button:not(.selection-toolbar__swatch) {
+  height: 24px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: transparent;
@@ -371,8 +377,38 @@ body {
   cursor: pointer;
 }
 
-.selection-toolbar button:hover {
+.selection-toolbar button:not(.selection-toolbar__swatch):hover:not(:disabled) {
   background: var(--line);
+}
+
+.selection-toolbar button:disabled {
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.selection-toolbar__swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.selection-toolbar__swatch[aria-pressed='true'] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+/* 「✓」画在色块上：深色底配白字、浅色底配深字都不如直接加描边稳。 */
+.selection-toolbar__check {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1;
+  text-shadow: 0 0 3px var(--paper), 0 0 3px var(--paper);
 }
 
 .annotation-list {

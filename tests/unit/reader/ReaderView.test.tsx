@@ -26,6 +26,7 @@ import type {
   EpubRendition
 } from '@renderer/reader/createEpubBook'
 import { READER_THEME_COLORS } from '@renderer/reader/readerAppearance'
+import { HIGHLIGHT_COLOR_LABELS, highlightFill } from '@renderer/reader/highlightPalette'
 import { seedRepository } from '../support/fakeRepository'
 
 afterEach(() => {
@@ -768,7 +769,7 @@ describe('ReaderView 书签与划线', () => {
     })
   })
 
-  it('选中文字弹出浮条，点划线后落盘并画到正文上', async () => {
+  it('选中文字弹出浮条，点色块后按该颜色落盘并画到正文上', async () => {
     const { epub, annotations } = await renderReady()
     await relocate(epub)
 
@@ -777,37 +778,141 @@ describe('ReaderView 书签与划线', () => {
     const toolbar = await screen.findByRole('toolbar', { name: '选中文字的操作' })
     expect(toolbar).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '划线' }))
+    fireEvent.click(screen.getByRole('button', { name: HIGHLIGHT_COLOR_LABELS.green }))
 
     await waitFor(() => {
       expect(epub.annotations.added).toHaveLength(1)
     })
-    expect(epub.annotations.added[0]).toMatchObject({ cfiRange: SELECTED_CFI, type: 'highlight' })
+    expect(epub.annotations.added[0]).toMatchObject({
+      cfiRange: SELECTED_CFI,
+      type: 'highlight',
+      styles: { fill: highlightFill('green') }
+    })
     expect(screen.queryByRole('toolbar', { name: '选中文字的操作' })).not.toBeInTheDocument()
 
     openAnnotations()
     expect(screen.getByRole('button', { name: '一段摘录' })).toBeInTheDocument()
     await expect(annotations.listByBook('book-1')).resolves.toMatchObject([
-      { kind: 'highlight', cfi: SELECTED_CFI, excerpt: '一段摘录', percent: 0.55, chapterHref: '' }
+      {
+        kind: 'highlight',
+        cfi: SELECTED_CFI,
+        excerpt: '一段摘录',
+        percent: 0.55,
+        chapterHref: '',
+        color: 'green'
+      }
     ])
   })
 
-  it('同一段选区再选一次，浮条上的按钮变成删除', async () => {
+  it('同一段选区再选一次，删除划线从不可点变成可点', async () => {
     const repository = new InMemoryAnnotationRepository()
-    await repository.save(
-      createHighlight({ id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录' }, 0)
-    )
     const { epub } = await renderReady({ annotationRepository: repository })
     await relocate(epub)
 
+    // 第一次选中：这段还没划线，删除按钮是灰的（文案恒定，只有可点状态会变）
     epub.select(SELECTED_CFI, contents())
+    expect(await screen.findByRole('button', { name: '删除划线' })).toBeDisabled()
 
-    fireEvent.click(await screen.findByRole('button', { name: '删除划线' }))
+    fireEvent.click(screen.getByRole('button', { name: HIGHLIGHT_COLOR_LABELS.yellow }))
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+
+    // 再选同一段：按钮个数与文案都不变，变的是它现在可点了
+    epub.select(SELECTED_CFI, contents())
+    const remove = await screen.findByRole('button', { name: '删除划线' })
+    expect(remove).toBeEnabled()
+
+    fireEvent.click(remove)
 
     await waitFor(() => {
       expect(epub.annotations.removed).toContainEqual({ cfiRange: SELECTED_CFI, type: 'highlight' })
     })
     await expect(repository.listByBook('book-1')).resolves.toEqual([])
+  })
+
+  it('改色是擦旧画新：同一个 cfi 上不留孤儿标记，存档里还是同一条', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createHighlight(
+        { id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录', color: 'green' },
+        0
+      )
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+    await relocate(epub)
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+
+    epub.select(SELECTED_CFI, contents())
+    fireEvent.click(await screen.findByRole('button', { name: HIGHLIGHT_COLOR_LABELS.blue }))
+
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(2)
+    })
+    expect(epub.annotations.added[1]).toMatchObject({
+      cfiRange: SELECTED_CFI,
+      styles: { fill: highlightFill('blue') }
+    })
+    // 必须先擦再画：epub.js 的 marks 表按 cfi 索引，只 add 会让旧标记失去引用、再也擦不掉
+    expect(epub.annotations.removed).toEqual([{ cfiRange: SELECTED_CFI, type: 'highlight' }])
+
+    // 原地改：还是那一条，id 与 createdAt 都不变
+    await expect(repository.listByBook('book-1')).resolves.toMatchObject([
+      { id: 'hl-1', color: 'blue', createdAt: 0 }
+    ])
+    await expect(repository.listByBook('book-1')).resolves.toHaveLength(1)
+  })
+
+  it('改色写不进去时正文画回原色，并且提示失败', async () => {
+    const inner = new InMemoryAnnotationRepository()
+    await inner.save(
+      createHighlight(
+        { id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录', color: 'green' },
+        0
+      )
+    )
+    const unwritable: AnnotationRepository = {
+      load: () => inner.load(),
+      listByBook: (bookId) => inner.listByBook(bookId),
+      save: () => Promise.reject(new Error('磁盘满了')),
+      remove: (bookId, id) => inner.remove(bookId, id),
+      removeByBook: (bookId) => inner.removeByBook(bookId)
+    }
+    const { epub } = await renderReady({ annotationRepository: unwritable })
+    await relocate(epub)
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(1)
+    })
+
+    epub.select(SELECTED_CFI, contents())
+    fireEvent.click(await screen.findByRole('button', { name: HIGHLIGHT_COLOR_LABELS.blue }))
+
+    // 第 1 次是打开书时画的绿，第 2 次是乐观改成的蓝，第 3 次是回滚后画回的绿
+    await waitFor(() => {
+      expect(epub.annotations.added).toHaveLength(3)
+    })
+    expect(epub.annotations.added[2]).toMatchObject({
+      cfiRange: SELECTED_CFI,
+      styles: { fill: highlightFill('green') }
+    })
+    expect(await screen.findByText(ANNOTATION_SAVE_FAILED_MESSAGE)).toBeInTheDocument()
+  })
+
+  it('抽屉里的划线标签带颜色名，不用点进去就知道标的是哪一种', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createHighlight(
+        { id: 'hl-1', bookId: 'book-1', cfi: SELECTED_CFI, excerpt: '一段摘录', color: 'blue' },
+        0
+      )
+    )
+    await renderReady({ annotationRepository: repository })
+
+    openAnnotations()
+
+    expect(await screen.findByText('蓝色划线')).toBeInTheDocument()
   })
 
   it('翻页后收起浮条，免得它飘在一处已经翻走的选区上', async () => {

@@ -1,4 +1,5 @@
 import type { HighlightAnnotation, HighlightColor } from '@core/domain/annotation'
+import { highlightFill } from './highlightPalette'
 import type { EpubAnnotationLayer } from './createEpubBook'
 
 const HIGHLIGHT_TYPE = 'highlight'
@@ -13,24 +14,11 @@ function fill(fillColor: string): Record<string, string> {
 /**
  * 配色 → epub.js 的 styles（它会和自带的 fill:yellow / mix-blend-mode:multiply 合并）。
  * 类名刻意不传，统一用 epub.js 默认的 `epubjs-hl`，E2E 才能用 `[ref^="epubjs-hl"]` 断言。
+ *
+ * 色值来自 highlightPalette，和浮条色块共用同一份，不在这里再写一遍十六进制。
  */
 export function highlightStyles(color: HighlightColor): Record<string, string> {
-  switch (color) {
-    case 'yellow':
-      return fill('#f2c744')
-    case 'green':
-      return fill('#4aa96c')
-    case 'blue':
-      return fill('#5b8def')
-    case 'pink':
-      return fill('#e07aa6')
-    default: {
-      // 收口：HIGHLIGHT_COLORS 将来加了新配色而这里没补映射时，本行直接编译失败，
-      // 而不是让新配色静默地画成默认黄色。
-      const unhandled: never = color
-      return fill(String(unhandled))
-    }
-  }
+  return fill(highlightFill(color))
 }
 
 export interface HighlightSyncer {

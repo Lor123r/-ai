@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import {
   normalizeExcerpt,
   type Annotation,
-  type HighlightAnnotation
+  type HighlightAnnotation,
+  type HighlightColor
 } from '@core/domain/annotation'
 import { formatPercentLabel, locatorFromRelocation } from '@core/domain/progress'
 import type { TocEntry } from '@core/domain/toc'
@@ -79,6 +80,7 @@ export default function ReaderView({
     failure,
     addBookmark,
     addHighlight,
+    setHighlightColor,
     removeAnnotation
   } = useBookAnnotations({ bookId, now })
   const settingsReady = settings !== null
@@ -246,11 +248,15 @@ export default function ReaderView({
       ? undefined
       : annotations.find((item) => item.kind === 'bookmark' && item.cfi === position.cfi)
 
-  // 划线同理：同 cfi 已有划线时按钮改为删除，不做「同一段划两次」
+  // 划线同理：同 cfi 已有划线时浮条改成「改色 / 删除」，不做「同一段划两次」。
+  // 用类型谓词收窄成 HighlightAnnotation，浮条才拿得到 color。
   const highlightAt =
     selection === null
       ? undefined
-      : annotations.find((item) => item.kind === 'highlight' && item.cfi === selection.cfi)
+      : annotations.find(
+          (item): item is HighlightAnnotation =>
+            item.kind === 'highlight' && item.cfi === selection.cfi
+        )
 
   const canAnnotate = status === 'ready' && annotationStatus === 'ready'
 
@@ -265,21 +271,44 @@ export default function ReaderView({
     void addBookmark({ cfi: position.cfi, chapterHref: position.chapterHref, percent: position.percent })
   }
 
-  function toggleHighlight(): void {
-    if (selection === null) return
+  /**
+   * 浮动条上点了某个色块：选区上还没有划线就地新建，已有就原地改色。
+   *
+   * 两个分支都不需要按 cfi 先删再建 —— 改色走的是同一条注解（id 不变），
+   * 图层那边按 id 记账、发现配色变了才会撤旧画新，不会留下孤儿 mark。
+   * 点到的正好是当前颜色时由 setHighlightColor 提前返回，一次 IPC 都不发。
+   */
+  function pickHighlightColor(color: HighlightColor): void {
+    if (selection === null || !canAnnotate) return
 
     const { cfi, excerpt } = selection
     const existing = highlightAt
     setSelection(null)
 
     if (existing) {
-      void removeAnnotation(existing)
+      void setHighlightColor(existing, color)
       return
     }
 
     // percent 用的是最近一次 relocated 的值，对划线只是近似：epub.js 的
     // selected 事件只给 cfi，不给进度。列表里的百分比因此可能和正文差一点。
-    void addHighlight({ cfi, excerpt, percent: position?.percent, chapterHref: position?.chapterHref })
+    void addHighlight({
+      cfi,
+      excerpt,
+      color,
+      percent: position?.percent,
+      chapterHref: position?.chapterHref
+    })
+  }
+
+  function removeHighlight(): void {
+    if (selection === null || !canAnnotate) return
+
+    const existing = highlightAt
+    setSelection(null)
+    if (!existing) return
+
+    void removeAnnotation(existing)
   }
 
   const theme = settings?.theme ?? 'day'
@@ -333,8 +362,9 @@ export default function ReaderView({
         {selection !== null && annotationStatus === 'ready' ? (
           <SelectionToolbar
             placement={selection.placement}
-            highlighted={highlightAt !== undefined}
-            onHighlight={toggleHighlight}
+            activeColor={highlightAt?.color ?? null}
+            onPickColor={pickHighlightColor}
+            onRemoveHighlight={removeHighlight}
             onDismiss={() => setSelection(null)}
           />
         ) : null}

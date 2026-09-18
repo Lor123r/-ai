@@ -61,7 +61,7 @@ describe('AnnotationDrawer', () => {
     renderDrawer({ annotations: [bookmark('a', 0.2), highlight('b', '一句摘录', 0.75)] })
 
     expect(screen.getByText('书签')).toBeInTheDocument()
-    expect(screen.getByText('划线')).toBeInTheDocument()
+    expect(screen.getByText('黄色划线')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '一句摘录' })).toBeInTheDocument()
   })
 
@@ -69,7 +69,7 @@ describe('AnnotationDrawer', () => {
     renderDrawer({ annotations: [bookmark('a', 0.2), highlight('b', '', 0.75)] })
 
     expect(screen.getByRole('button', { name: '20% 处的书签' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '75% 处的划线' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '75% 处的黄色划线' })).toBeInTheDocument()
   })
 
   it('删除按钮的无障碍名带上条目文案，多条列表里也分得清', () => {

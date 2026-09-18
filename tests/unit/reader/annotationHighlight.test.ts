@@ -10,6 +10,7 @@ import {
   createHighlightSyncer,
   highlightStyles
 } from '@renderer/reader/annotationHighlight'
+import { highlightFill } from '@renderer/reader/highlightPalette'
 import type { EpubAnnotationLayer } from '@renderer/reader/createEpubBook'
 
 interface RecordedCall {
@@ -54,6 +55,19 @@ describe('highlightStyles', () => {
 
   it('默认配色落在配色表里', () => {
     expect(HIGHLIGHT_COLORS).toContain(DEFAULT_HIGHLIGHT_COLOR)
+  })
+
+  // 色值只准有一份来源：两边各写一份十六进制，改了一处就会浮条与正文不同色。
+  it('fill 逐色取自 highlightPalette', () => {
+    for (const color of HIGHLIGHT_COLORS) {
+      expect(highlightStyles(color).fill).toBe(highlightFill(color))
+    }
+  })
+
+  it('不透明度仍是 0.35，改配色不该动到可读性', () => {
+    for (const color of HIGHLIGHT_COLORS) {
+      expect(highlightStyles(color)['fill-opacity']).toBe('0.35')
+    }
   })
 })
 

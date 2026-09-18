@@ -20,6 +20,7 @@ import {
   normalizeExcerpt,
   normalizeHighlightColor,
   normalizeNote,
+  recolorHighlight,
   reviveAnnotation,
   type Annotation
 } from '@core/domain/annotation'
@@ -298,6 +299,51 @@ describe('createHighlight', () => {
     expect(() => createHighlight({ id: 'h1', bookId: 'b1', cfi: tooLong })).toThrow(/^注解定位过长$/)
     expect(normalizeAnnotationCfi(tooLong)).not.toBe(tooLong.slice(0, MAX_CFI_LENGTH))
     expect(normalizeAnnotationCfi(tooLong)).toBeNull()
+  })
+})
+
+describe('recolorHighlight', () => {
+  /** 时间固定的划线：用来证明改色只动 color 与 updatedAt。 */
+  const ORIGINAL = createHighlight(
+    {
+      id: 'h1',
+      bookId: 'b1',
+      cfi: 'epubcfi(/6/4!/4/2,/1:0,/1:10)',
+      chapterHref: 'ch1.xhtml',
+      percent: 0.4,
+      note: '重点',
+      excerpt: '正文片段',
+      color: 'yellow'
+    },
+    1000
+  )
+
+  it('只换配色并推进 updatedAt，id / cfi / excerpt / createdAt 一个不动', () => {
+    expect(recolorHighlight(ORIGINAL, 'blue', 5000)).toEqual({
+      id: 'h1',
+      bookId: 'b1',
+      kind: 'highlight',
+      cfi: 'epubcfi(/6/4!/4/2,/1:0,/1:10)',
+      chapterHref: 'ch1.xhtml',
+      percent: 0.4,
+      note: '重点',
+      excerpt: '正文片段',
+      color: 'blue',
+      createdAt: 1000,
+      updatedAt: 5000
+    })
+  })
+
+  it('非法配色收敛成默认色，不把未知字符串写进存档', () => {
+    expect(recolorHighlight(ORIGINAL, 'Purple' as never, 5).color).toBe(DEFAULT_HIGHLIGHT_COLOR)
+  })
+
+  it('返回的是新对象，原来那条还是旧颜色与旧修改时间', () => {
+    const next = recolorHighlight(ORIGINAL, 'pink', 5)
+
+    expect(next).not.toBe(ORIGINAL)
+    expect(ORIGINAL.color).toBe('yellow')
+    expect(ORIGINAL.updatedAt).toBe(1000)
   })
 })
 

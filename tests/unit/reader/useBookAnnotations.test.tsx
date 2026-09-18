@@ -1,8 +1,14 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import { InMemoryAnnotationRepository } from '@core/adapters/inMemoryAnnotationRepository'
-import { createBookmark, type Annotation } from '@core/domain/annotation'
+import {
+  createBookmark,
+  createHighlight,
+  type Annotation,
+  type HighlightAnnotation,
+  type HighlightColor
+} from '@core/domain/annotation'
 import type { AnnotationRepository } from '@core/ports/annotationRepository'
 import { AnnotationRepositoryProvider } from '@renderer/data/AnnotationRepositoryProvider'
 import {
@@ -44,6 +50,13 @@ function failingRepository(error: Error, action: 'save' | 'remove'): AnnotationR
 
 function bookmark(id: string, bookId = 'book-1'): Annotation {
   return createBookmark({ id, bookId, cfi: `epubcfi(/6/${id})` }, 0)
+}
+
+function highlight(id: string, color: HighlightColor, createdAt = 1000): HighlightAnnotation {
+  return createHighlight(
+    { id, bookId: 'book-1', cfi: `epubcfi(/6/${id})`, excerpt: '一段摘录', color },
+    createdAt
+  )
 }
 
 describe('useBookAnnotations', () => {
@@ -342,5 +355,108 @@ describe('useBookAnnotations', () => {
     })
 
     expect(result.current.annotations.map((item) => item.id)).toEqual(['z'])
+  })
+
+  it('改色是原地改：换配色并推进修改时间，id 与 createdAt 都不动', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(highlight('hl-1', 'yellow', 1000))
+    // 注入时钟与 createdAt 故意取不同的值：断言 updatedAt 等于时钟值，
+    // 就等于证明它走的是注入时钟，而不是顺手抓了一次 Date.now()。
+    const clock = frozenClock()
+    const { result } = renderHook(
+      () => useBookAnnotations({ bookId: 'book-1', now: clock }),
+      { wrapper: wrapper(repository) }
+    )
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    await act(async () => {
+      await result.current.setHighlightColor(result.current.annotations[0] as HighlightAnnotation, 'blue')
+    })
+
+    expect(result.current.annotations).toHaveLength(1)
+    expect(result.current.annotations[0]).toMatchObject({
+      id: 'hl-1',
+      color: 'blue',
+      createdAt: 1000,
+      updatedAt: clock()
+    })
+    expect(result.current.failure).toBeNull()
+    await expect(repository.listByBook('book-1')).resolves.toMatchObject([
+      { id: 'hl-1', color: 'blue', createdAt: 1000, updatedAt: clock() }
+    ])
+  })
+
+  it('改色落盘失败时整份回滚成原色并给失败文案', async () => {
+    const seed = new InMemoryAnnotationRepository()
+    await seed.save(highlight('hl-1', 'yellow', 1000))
+    const repository = failingRepository(new Error('IPC 断了'), 'save')
+    repository.listByBook = (bookId) => seed.listByBook(bookId)
+
+    const { result } = renderHook(
+      () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+      { wrapper: wrapper(repository) }
+    )
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    await act(async () => {
+      await result.current.setHighlightColor(result.current.annotations[0] as HighlightAnnotation, 'blue')
+    })
+
+    expect(result.current.annotations[0]).toMatchObject({ id: 'hl-1', color: 'yellow' })
+    expect(result.current.failure).toBe(ANNOTATION_SAVE_FAILED_MESSAGE)
+  })
+
+  it('改色不动列表顺序，否则改一次颜色那条就跳到列表顶端', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(highlight('old', 'yellow', 0))
+    await repository.save(highlight('new', 'green', 5000))
+
+    const { result } = renderHook(
+      () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+      { wrapper: wrapper(repository) }
+    )
+    await waitFor(() => {
+      expect(result.current.annotations.map((item) => item.id)).toEqual(['new', 'old'])
+    })
+
+    const order = result.current.annotations.map((item) => item.id)
+    await act(async () => {
+      await result.current.setHighlightColor(result.current.annotations[1] as HighlightAnnotation, 'pink')
+    })
+
+    expect(result.current.annotations.map((item) => item.id)).toEqual(order)
+    expect(result.current.annotations[1]).toMatchObject({ id: 'old', color: 'pink', createdAt: 0 })
+  })
+
+  it('改色成同一个颜色不落盘，一次多余的文件写都不该发生', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(highlight('hl-1', 'green', 1000))
+    const save = vi.spyOn(repository, 'save')
+
+    const { result } = renderHook(
+      () => useBookAnnotations({ bookId: 'book-1', now: frozenClock() }),
+      { wrapper: wrapper(repository) }
+    )
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    const before = result.current.annotations[0]
+    save.mockClear()
+
+    await act(async () => {
+      await result.current.setHighlightColor(before as HighlightAnnotation, 'green')
+    })
+
+    expect(save).not.toHaveBeenCalled()
+    // 没有改动就连 updatedAt 都不该被顺手刷新：列表里那条必须逐字段保持原样
+    expect(result.current.annotations).toEqual([before])
+    expect(result.current.failure).toBeNull()
+
+    // 仓库没有开全局 restoreMocks，spy 必须在本用例内还原
+    save.mockRestore()
   })
 })

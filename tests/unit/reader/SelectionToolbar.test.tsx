@@ -1,17 +1,17 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { HIGHLIGHT_COLORS, type HighlightColor } from '@core/domain/annotation'
 import SelectionToolbar, {
+  EDGE,
+  GAP,
+  TOOLBAR_HEIGHT,
+  TOOLBAR_WIDTH,
   placeSelectionToolbar,
   selectionPlacement,
   type RectLike
 } from '@renderer/reader/SelectionToolbar'
+import { HIGHLIGHT_COLOR_LABELS, highlightFill } from '@renderer/reader/highlightPalette'
 import type { EpubContents, EpubSelection } from '@renderer/reader/createEpubBook'
-
-/** 浮条自身的尺寸与留白，抄自 SelectionToolbar 的私有常量：断言要能算出具体数字。 */
-const TOOLBAR_WIDTH = 148
-const TOOLBAR_HEIGHT = 34
-const GAP = 8
-const EDGE = 8
 
 function rect(top: number, left: number, width: number, height: number): RectLike {
   return { top, left, width, height }
@@ -156,42 +156,139 @@ describe('selectionPlacement', () => {
   })
 })
 
+/** jsdom 会把十六进制归一成自己的写法，所以拿探针元素做同一次归一化再比，避免断言写死写法。 */
+function normalizedStyle(property: 'background', value: string): string {
+  const probe = document.createElement('div')
+  probe.style[property] = value
+  return probe.style[property]
+}
+
 describe('SelectionToolbar', () => {
   const placement = { top: 10, left: 20, fallback: false }
 
-  it('渲染两个动作，并且带上浮条应有的语义', () => {
-    render(
-      <SelectionToolbar placement={placement} highlighted={false} onHighlight={vi.fn()} onDismiss={vi.fn()} />
+  function renderToolbar(activeColor: HighlightColor | null) {
+    // 参数只用于把 mock 的实参类型固定下来，实现是空的（noUnusedParameters 要求下划线前缀）
+    const onPickColor = vi.fn((_color: HighlightColor) => {})
+    const onRemoveHighlight = vi.fn(() => {})
+    const onDismiss = vi.fn(() => {})
+
+    const view = render(
+      <SelectionToolbar
+        placement={placement}
+        activeColor={activeColor}
+        onPickColor={onPickColor}
+        onRemoveHighlight={onRemoveHighlight}
+        onDismiss={onDismiss}
+      />
     )
+
+    return { view, onPickColor, onRemoveHighlight, onDismiss }
+  }
+
+  /** 色块是浮条上唯一带 aria-pressed 的控件，按属性取比按类名取更不容易被改样式带崩。 */
+  function swatches(): HTMLElement[] {
+    return screen.getAllByRole('button').filter((button) => button.hasAttribute('aria-pressed'))
+  }
+
+  it('渲染出的色块个数与 HIGHLIGHT_COLORS 一致，色值取自 highlightPalette', () => {
+    renderToolbar(null)
 
     const toolbar = screen.getByRole('toolbar', { name: '选中文字的操作' })
     expect(toolbar).toHaveStyle({ top: '10px', left: '20px' })
-    expect(screen.getByRole('button', { name: '划线' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
-  })
 
-  it('同一段选区已有划线时主按钮变成删除', () => {
-    render(
-      <SelectionToolbar placement={placement} highlighted={true} onHighlight={vi.fn()} onDismiss={vi.fn()} />
+    // 个数必须对齐配色表：TOOLBAR_WIDTH 的算式按 HIGHLIGHT_COLORS.length 推宽，
+    // 少画一个色块浮条就会比常量窄，夹取范围跟着错位。
+    const buttons = swatches()
+    expect(buttons).toHaveLength(HIGHLIGHT_COLORS.length)
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(
+      HIGHLIGHT_COLORS.map((color) => HIGHLIGHT_COLOR_LABELS[color])
     )
 
-    expect(screen.getByRole('button', { name: '删除划线' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '划线' })).not.toBeInTheDocument()
+    for (const color of HIGHLIGHT_COLORS) {
+      // 用可访问名查色块：名字对不上说明 aria-label 没落到对应的那个色块上
+      const swatch = screen.getByRole<HTMLButtonElement>('button', {
+        name: HIGHLIGHT_COLOR_LABELS[color]
+      })
+      expect(swatch.style.background).toBe(normalizedStyle('background', highlightFill(color)))
+    }
   })
 
-  it('两个按钮各自回调，且不把点击互相串起来', () => {
-    const onHighlight = vi.fn()
-    const onDismiss = vi.fn()
-    render(
-      <SelectionToolbar placement={placement} highlighted={false} onHighlight={onHighlight} onDismiss={onDismiss} />
-    )
+  it('选区上没有划线时四个色块都不带选中态，删除划线不可点', () => {
+    renderToolbar(null)
 
-    fireEvent.click(screen.getByRole('button', { name: '划线' }))
-    expect(onHighlight).toHaveBeenCalledTimes(1)
+    for (const button of swatches()) {
+      expect(button).toHaveAttribute('aria-pressed', 'false')
+    }
+    expect(screen.getByRole('button', { name: '删除划线' })).toBeDisabled()
+    expect(screen.queryByText('✓')).not.toBeInTheDocument()
+  })
+
+  it('选区上的划线是绿色时只有绿色被按下，删除划线可点', () => {
+    renderToolbar('green')
+
+    const pressed = swatches().filter((button) => button.getAttribute('aria-pressed') === 'true')
+
+    expect(pressed).toHaveLength(1)
+    expect(pressed[0]).toHaveAttribute('aria-label', HIGHLIGHT_COLOR_LABELS.green)
+    expect(screen.getByRole('button', { name: '删除划线' })).toBeEnabled()
+    expect(screen.getByText('✓')).toBeInTheDocument()
+  })
+
+  it('点哪个色块就回传哪个颜色，不惊动删除与取消', () => {
+    const { onPickColor, onRemoveHighlight, onDismiss } = renderToolbar(null)
+
+    for (const color of HIGHLIGHT_COLORS) {
+      fireEvent.click(screen.getByRole('button', { name: HIGHLIGHT_COLOR_LABELS[color] }))
+    }
+
+    expect(onPickColor.mock.calls.map(([color]) => color)).toEqual([...HIGHLIGHT_COLORS])
+    expect(onRemoveHighlight).not.toHaveBeenCalled()
     expect(onDismiss).not.toHaveBeenCalled()
+  })
+
+  // 复现审查里的 M3：色块的可访问名一度要靠「✓」的内容或 title 回落去算，
+  // 选中态一变名字就跟着变，读屏用户听到的控件名字会莫名多一个勾。
+  // 名字必须恒定来自 aria-label，与选中态、与色块里的内容都无关。
+  it('色块的可访问名恒定为配色中文名，不随选中态与内容变', () => {
+    const { view } = renderToolbar(null)
+
+    expect(screen.getByRole('button', { name: HIGHLIGHT_COLOR_LABELS.green })).toBeInTheDocument()
+
+    view.rerender(
+      <SelectionToolbar
+        placement={placement}
+        activeColor="green"
+        onPickColor={vi.fn(() => {})}
+        onRemoveHighlight={vi.fn(() => {})}
+        onDismiss={vi.fn(() => {})}
+      />
+    )
+
+    // 名字仍是「绿色」而控件里确实多了个「✓」—— 精确匹配能命中，说明勾没被算进名字。
+    const swatch = screen.getByRole('button', { name: HIGHLIGHT_COLOR_LABELS.green })
+    expect(swatch).toHaveAttribute('aria-label', HIGHLIGHT_COLOR_LABELS.green)
+    expect(swatch).toHaveTextContent('✓')
+  })
+
+  it('删除划线与取消各自回调，互不串台，无划线时删除点了也没反应', () => {
+    const idle = renderToolbar(null)
+
+    expect(screen.getByRole('button', { name: '删除划线' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '删除划线' }))
+    expect(idle.onRemoveHighlight).not.toHaveBeenCalled()
+    expect(idle.onDismiss).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(onDismiss).toHaveBeenCalledTimes(1)
-    expect(onHighlight).toHaveBeenCalledTimes(1)
+    expect(idle.onDismiss).toHaveBeenCalledTimes(1)
+    expect(idle.onRemoveHighlight).not.toHaveBeenCalled()
+
+    idle.view.unmount()
+
+    const active = renderToolbar('green')
+
+    fireEvent.click(screen.getByRole('button', { name: '删除划线' }))
+    expect(active.onRemoveHighlight).toHaveBeenCalledTimes(1)
+    expect(active.onDismiss).not.toHaveBeenCalled()
+    expect(active.onPickColor).not.toHaveBeenCalled()
   })
 })

@@ -32,9 +32,9 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 提交数 | 29 |
-| 单元/组件测试 | 58 个文件 / **710** 个用例，全通过 |
-| 端到端测试 | **13** 条 Playwright + Electron 用例，全通过 |
+| 提交数 | 30 |
+| 单元/组件测试 | 59 个文件 / **732** 个用例，全通过 |
+| 端到端测试 | **14** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
 
@@ -87,12 +87,12 @@ npm install --registry=https://registry.npmmirror.com
 | 阅读进度 | 记录 CFI + 全书百分比 + 章节序号，重开应用后回到上次位置 |
 | 目录 | 解析 EPUB 2 NCX 与 EPUB 3 nav，抽屉列出层级并支持点击跳转 |
 | 阅读设置 | 字号 / 行高 / 页边距 / 主题（白天·护眼·夜间）/ 字体（宋体·黑体），改动落盘并在重启后保持 |
-| 书签与划线 | 头部一键加/删书签；选中正文弹出浮条划线或删除划线，黄色底色；注解抽屉列出全书书签与划线并支持逐条删除 |
+| 书签与划线 | 头部一键加/删书签；选中正文弹出浮条，四个色块任选一种划线颜色，选区上已有划线时可原地改色或删除；注解抽屉列出全书书签与划线（带配色名）并支持逐条删除 |
 | 容错 | 书库/注解文件损坏时备份并从空数据启动；设置损坏时静默回落默认值 |
 
 ### 明确不做（留给后续版本）
 
-TXT 正文渲染（格式识别已支持，渲染未做）、划线的颜色切换界面、注解的导出导入、全文搜索、批注、多标签页、云同步、打包分发。
+TXT 正文渲染（格式识别已支持，渲染未做）、注解的导出导入、全文搜索、批注、多标签页、云同步、打包分发。
 
 ---
 
@@ -426,22 +426,26 @@ flowchart TB
     B --> C["normalizeExcerpt 取摘录"]
     C --> D{"摘录非空<br/>且算得出浮条位置？"}
     D -->|否| E["不弹浮条"]
-    D -->|是| F["SelectionToolbar 定位到选区上方"]
-    F --> G["点『划线』"]
-    G --> H["createAnnotationId() 立刻拿到 id<br/>（不等 IPC 往返）"]
+    D -->|是| F["SelectionToolbar 定位到选区上方<br/>四个色块 + 删除划线（无划线时禁用）"]
+    F --> G{"选区上已有划线？"}
+    G -->|否| H["createAnnotationId() 立刻拿到 id<br/>（不等 IPC 往返）"]
+    G -->|是| G2{"点的就是当前颜色？"}
+    G2 -->|是| G3["零改动零写盘，只收起浮条"]
+    G2 -->|否| G4["recolorHighlight 原地改色<br/>id 与 createdAt 都不变"]
     H --> I["乐观更新：新数组进 state，界面立刻出现"]
-    I --> J["commitNew 里 await repo.save(...)"]
+    G4 --> I
+    I --> J["commitNew / setHighlightColor 里 await repo.save(...)"]
     J -->|成功| K["annotations.json 落盘"]
     J -->|失败| L["整份旧数组回滚<br/>syncer 差分把 mark 摘掉并显示失败文案"]
     I --> M["activeSyncer.sync(只挑 highlight)"]
-    M --> N["与上一轮图层做差分<br/>只推新增的 add / 消失的 remove"]
+    M --> N["与上一轮图层做差分<br/>推 add / remove，配色变了则先 remove 再 add"]
 ```
 
 五个关键决策：
 
 1. **id 由渲染层生成，主进程只校验。** 渲染层为了做乐观更新不等 IPC 往返（见第 6 章 `id` 那条），主进程那边这枚 id 已经在信任边界之外，所以 `annotations:save` 会重新校验一遍长度与字符集。
 2. **图层同步是差分的，不是每次全清全画。** 每次 `annotations` 变化都 `reset()` 一遍会让整本书的 mark 闪一下，而且 epub.js 的 `annotations.add` 在同一 cfi 上重复添加时会覆盖内部引用、留下孤儿 mark（见第 10 章）。所以 [annotationHighlight.ts](src/renderer/src/reader/annotationHighlight.ts) 记着上一轮的 `Map<id, { cfi, color }>`，只推差分；`reset()` 只允许出现在销毁 rendition 的那段 cleanup 里。
-3. **书签是 toggle，划线是 add / remove 两个明确动作。** 书签没有正文标记，只靠位置判断「当前这页有没有书签」；划线则是「选中后再点删除」——选中一段已有划线时浮条上的主按钮会变成「删除划线」，对应 `annotations.remove(cfi, 'highlight')`。删除要点两下（选中 + 点按钮），这是刻意的：MVP 没有做「点 mark 直接删」的命中测试。
+3. **书签是 toggle，划线是「点色块定色 / 原地改色」，删除是独立动作。** 书签没有正文标记，只靠位置判断「当前这页有没有书签」；划线浮条的四个色块直接定色，选区上已有划线时同一排色块就是改色入口 —— `recolorHighlight` 改的是同一条注解，id 与 `createdAt` 都不动，因为「删了重划」会在同一 cfi 上换一个 id，而图层按 id 记账、epub.js 的 marks 表按 cfi 索引，两边错位就会留下一枚清不掉的孤儿 mark。点到的正好是当前颜色则零改动零写盘（只收起浮条），与仓储里「删除不存在的 id 不写盘」同一条约定。删除入口是浮条上**常驻**的「删除划线」，没有划线时 `disabled`：常驻而不是按状态换文案，是为了让控件个数恒定、浮条宽度成为常量，定位不会随状态漂移。删除要点两下（选中 + 点按钮），这是刻意的：MVP 没有做「点 mark 直接删」的命中测试。
 4. **翻页会收起浮条。** `relocated` 时清空选区状态，否则浮条会挂在一个已经不存在的选区上。浮条用 `position: absolute` 落在 `.reader__viewport` 内，位置不是直接拿选区坐标——选区坐标在 **iframe 内部**，必须先补上 iframe 元素相对容器的偏移。算完还有三种收口：上方放不下就翻到选区下方；左右夹在容器内；上下都放不下就落回容器顶部（分栏排版里这是常态，见 [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) 的 `fallback`）。
 5. **注解抽屉同时承担「跳回原文」和「删除」。** 没有它的话划线划下去就没有任何删除入口，书签的 toggle 也只能在同一页上生效，而且注解列表本身不可见。抽屉里的条目用摘录当按钮文案（没有摘录的划线、所有书签就退化成「百分比 + 类型」），保证不会出现空白按钮。
 
@@ -656,7 +660,7 @@ return ePub(copy.buffer)
 
 它还必须**字节确定**：生成前把所有 zip 条目的时间戳统一盖成 `FIXTURE_DATE`。JSZip 默认给每个条目盖当前时间，而 zip 的 DOS 时间戳只有 2 秒精度，同一份 fixture 生成两次就会得到不同字节，一切按内容哈希判等的断言都会随机失败。注意 `zip.file` 的 `date` 选项只作用于显式添加的文件，JSZip 隐式补出的目录条目（`META-INF/`、`OEBPS/`）仍取当前时间，所以固定动作统一放在生成那一步，并由单测钉住。
 
-### 端到端测试（13 条）
+### 端到端测试（14 条）
 
 | # | 用例 | 验证的核心契约 |
 | --- | --- | --- |
@@ -670,9 +674,10 @@ return ePub(copy.buffer)
 | 8 | 目录会列出章节，点击条目后正文跳到对应章节 | 嵌套目录渲染 + 跳转确实换章 |
 | 9 | 阅读设置会落盘，重开应用后依然生效 | 设置作用到书内样式 + 节流落盘 + 重启恢复 |
 | 10 | 渲染进程的 WebCrypto 满足注解 id 生成的降级假设 | `file://` 主框架是安全上下文、`randomUUID` 与 `getRandomValues` 都在、产出的 id 落在 core 白名单内 |
-| 11 | 在正文里划线会落盘，重启后重新画回正文 | iframe 选区 → CFI → 摘录 → 乐观更新 → `annotations.json`；重启后 `ref="epubjs-hl"` 的 mark 被重新注入 |
+| 11 | 在正文里划线会落盘，重启后重新画回正文 | iframe 选区 → CFI → 摘录 → 乐观更新 → `annotations.json`；重启后 `ref="epubjs-hl"` 的 mark 被重新注入，且注解抽屉的类型标签带上配色名 |
 | 12 | 删掉已有的划线后，重启也不会再画回来 | `annotations:remove` 真的落盘，且列表、正文标记、存档三处一起消失 |
 | 13 | 删书会清掉这本书的注解与磁盘文件，再导入同一个文件不会复活 | `books:remove` 在主进程里按「先删书、后删注解、最后回收文件」收尾；`annotations.json` 里这本书的条目、正文标记、`books/` 下的 epub 与 `covers/` 下的封面一起消失，而同一个 sha256 仍能重新导入 |
+| 14 | 给已有的划线改色会落盘，重启后正文与列表都显示新颜色 | 浮条色块 → `recolorHighlight` 原地改同一条注解（id 与 `createdAt` 不变）→ `annotations:save` 覆盖同一条 → 重启后 `epubjs-hl` 的 `fill` 属性是**新**色值、抽屉标签也换成新配色名；点回当前颜色不会多写一次盘 |
 
 E2E 基础设施的三个要点：
 
@@ -682,7 +687,9 @@ E2E 基础设施的三个要点：
 
 第 10 条是**探针**用例，不是功能验证：`crypto.randomUUID()` 是安全上下文限定接口，而 jsdom 里的 `crypto` 是 Node 泄进全局的 webcrypto，两者不是一回事，单测证明不了生产环境真的能拿到第一档。这条用例在真实渲染进程里读 `isSecureContext` 与两个接口的存在性，并顺手验证 200 个 id 互不重复、且每一个都落在 core 的白名单内——也就是「渲染层产出 → 主进程校验」这条唯一契约。当前实测结论：生产用 `file://` 加载页面，Chromium 把 `file://` 视为可信来源，所以 `isSecureContext === true`、`randomUUID` 可用，第一档就是真实生产路径；第二、三档只是防线。
 
-第 11、12 条是这两条注解用例最值钱的地方：**它们是唯一能证明「界面 → IPC → 磁盘 → 重启 → 界面」整条链真的通了的测试**。单测里 epub.js 被 `fakeEpub` 整个换掉，也就顺带把「选区事件到底由谁发、CFI 长什么样、mark 到底挂在哪个文档」全部假设掉了；而这三件事恰好都是靠读源码才确认下来的（见第 10 章）。两条用例各有一次 `page.reload()`，重启后的断言不再依赖任何内存状态。
+第 11、12、14 条是这几条注解用例最值钱的地方：**它们是唯一能证明「界面 → IPC → 磁盘 → 重启 → 界面」整条链真的通了的测试**。单测里 epub.js 被 `fakeEpub` 整个换掉，也就顺带把「选区事件到底由谁发、CFI 长什么样、mark 到底挂在哪个文档」全部假设掉了；而这三件事恰好都是靠读源码才确认下来的（见第 10 章）。三条用例各有一次 `page.reload()`，重启后的断言不再依赖任何内存状态。
+
+第 14 条还钉住了一件单测钉不住的事：**改色后的色值真的落到了 SVG 属性上**。epub.js 把 `styles` 原样交给 marks-pane，后者用 `element.setAttribute(attr, ...)` 写进去，所以 `fill` 是个可断言的真属性 —— 这条链路在单测里被 `fakeLayer.added` 记的是一份参数，只有真机才知道它最终是不是变成了 DOM 属性。
 
 划线用例里有几个刻意的写法值得注意：选区是在 **iframe 内部**用 `Range` 建的（正文在 iframe 里，主 frame 上没有可选的文字）；建完**不派发 `selectionchange`**，靠 Chromium 自己的默认行为触发（epub.js 监听的就是这个事件），但如果换非 Chromium 内核就要显式补上；E2E 侧必须留出等待，因为 epub.js 的选区回调带 250ms 防抖。数标记时选择器落在 `.reader__viewport [ref^="epubjs-hl"]`——**mark 在宿主文档里，不在 iframe 里**，写进 iframe 里数会一直是 0。
 
@@ -776,6 +783,7 @@ test:e2e = build && playwright test
 | 27 | `8ff8278` | 功能 | 删书时一并清掉该书的注解：主进程 handler 按「先删书、后删注解」收尾、清理失败降级为告警，并补齐单测与端到端用例 |
 | 28 | `4896a9c` | 功能 | 删书时回收磁盘上的 epub 与封面：`FileStore` 的 `remove` 与新增的 `removeCover` 都要求传 `bookId` 校验文件归属，主进程按「先删数据、后删文件」收尾，文件删不掉只留告警，并补齐单测与端到端用例 |
 | 29 | `d36dd1d` | 修复 | 清掉三处挂账：删书的收尾失败按性质分级留痕（文件被占用降为告警、越界与未知错误升为错误）；`registerBooksIpc` 收成 deps 对象与 `registerLibraryIpc` 对齐；导入写入书库失败时回收刚复制进来的 epub 与封面，并让单个文件失败不再中断整批；`JsonBookRepository` 四条写操作落盘失败时回滚内存 |
+| 30 | `—` | 功能 | 浮条支持四种划线配色并原地改色：色值与中文名抽到 `highlightPalette.ts` 成为唯一归属地，浮条改为四个色块 + 常驻的「删除划线」，`recolorHighlight` 原地改同一条注解（id 与 `createdAt` 都不动），点到当前颜色零改动零写盘，并补齐单测与端到端用例 |
 
 ### 过程中沉淀下来的经验
 
@@ -804,7 +812,7 @@ test:e2e = build && playwright test
 ### 后续方向
 
 1. **TXT 渲染通道** —— 与 EPUB 并列的第二种阅读后端，复用现有的进度与设置体系。
-2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[ReaderView.tsx](src/renderer/src/reader/ReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）。剩下的都是体验层：划线的颜色切换 UI（core 已支持四种颜色，界面固定用默认黄）、注解的导出导入、书签在正文里的视觉标记、跨分栏重排后的位置修正。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[ReaderView.tsx](src/renderer/src/reader/ReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。剩下的都是体验层：注解的导出导入、书签在正文里的视觉标记、跨分栏重排后的位置修正。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。
