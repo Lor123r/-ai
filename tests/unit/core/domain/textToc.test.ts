@@ -36,6 +36,62 @@ describe('generateTextToc', () => {
     ])
   })
 
+  it('「话」「幕」这类后缀也认', () => {
+    expect(labels(['第一话 相遇', '第 3 幕 落幕', '第十二回'])).toEqual([
+      '第一话 相遇',
+      '第 3 幕 落幕',
+      '第十二回'
+    ])
+  })
+
+  it('罗马数字序号也认', () => {
+    expect(labels(['第Ⅰ章 序曲', '第 IV 章 终曲'])).toEqual(['第Ⅰ章 序曲', '第 IV 章 终曲'])
+  })
+
+  it('序号写在后面的「卷五」「章三」也认', () => {
+    expect(labels(['卷五 风起', '章三 归途'])).toEqual(['卷五 风起', '章三 归途'])
+  })
+
+  it('英文 Chapter / Part 标题也认', () => {
+    expect(labels(['Chapter 3 The Door', 'PART 12', 'part 7 尾声'])).toEqual([
+      'Chapter 3 The Door',
+      'PART 12',
+      'part 7 尾声'
+    ])
+  })
+
+  it('纯编号行带分隔符与标题正文时认', () => {
+    expect(labels(['01. 起点', '2、转折', '三：归途', '4 终局'])).toEqual([
+      '01. 起点',
+      '2、转折',
+      '三：归途',
+      '4 终局'
+    ])
+  })
+
+  it('光秃秃的编号不算标题，免得把页码和年份列进目录', () => {
+    // 有真标题打底，才不会掉进退化分支，这条断言才真的在说「没认出来」
+    const entries = generateTextToc(['第一章 初见', '01', '2024', '3.'])
+
+    expect(entries.map((entry) => entry.blockIndex)).toEqual([0])
+  })
+
+  it('编号后面跟的是长句子就不认', () => {
+    const entries = generateTextToc([
+      '第一章 初见',
+      '1. 他站在门口看着远处的山和云，想起很多年前的那个下午，那时候一切都还来得及'
+    ])
+
+    expect(entries.map((entry) => entry.blockIndex)).toEqual([0])
+  })
+
+  it('同一行被两条规则同时认到时只出一条', () => {
+    const entries = generateTextToc(['第一章 初见\n1. 起点\n第二章 离别'])
+
+    expect(entries.map((entry) => entry.label)).toEqual(['第一章 初见', '1. 起点', '第二章 离别'])
+    expect(entries.map((entry) => entry.offset)).toEqual([0, 7, 13])
+  })
+
   it('章节之间只换行不空行时，同一块里的多个标题照样都列出来', () => {
     const entries = generateTextToc(['第一章 初见\n正文一\n第二章 离别\n正文二'])
 
