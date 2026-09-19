@@ -151,7 +151,7 @@ test('应用启动后展示书架空态', async () => {
 
       await expect(window.getByRole('heading', { name: '书架' })).toBeVisible()
       await expect(window.getByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).toBeVisible()
-      await expect(window.getByText(/^Electron \d+\.\d+\.\d+ · Chromium /)).toBeVisible()
+      await expect(window.getByText(/^v\d+\.\d+\.\d+ · Electron \d+\.\d+\.\d+$/)).toBeVisible()
 
       expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
     } finally {

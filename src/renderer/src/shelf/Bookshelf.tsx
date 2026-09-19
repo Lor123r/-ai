@@ -3,7 +3,8 @@ import { formatPercentLabel, isBookFinished } from '@core/domain/progress'
 import { applyShelfView } from '@core/domain/shelfView'
 import { useBookImporter } from '@renderer/data/BookImporterProvider'
 import { useBooks, type ShelfEntry } from '@renderer/hooks/useBooks'
-import { formatRuntimeLabel, getRuntimeVersions } from '@renderer/platform/runtime'
+import { formatRuntimeLabel } from '@renderer/platform/runtime'
+import { useRuntimeVersions } from '@renderer/platform/useRuntimeVersions'
 import BookCover from './BookCover'
 import ShelfToolbar from './ShelfToolbar'
 import { describeImportFailures, describeImportResult } from './importNotice'
@@ -70,7 +71,7 @@ export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps):
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
-  const runtimeLabel = formatRuntimeLabel(getRuntimeVersions())
+  const runtimeLabel = formatRuntimeLabel(useRuntimeVersions())
   const visible = applyShelfView(entries, view)
   const filtered = view.filter !== 'all'
 

@@ -3,19 +3,25 @@ import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { registerAnnotationsIpc } from './ipc/annotationsIpc'
 import { registerBooksIpc } from './ipc/booksIpc'
 import { registerLibraryIpc } from './ipc/libraryIpc'
+import { registerRuntimeIpc } from './ipc/runtimeIpc'
 import { registerSettingsIpc } from './ipc/settingsIpc'
 import { FileBookStore } from './import/fileBookStore'
+import { applyUserDataOverride } from './storage/portable'
 import { openSettings, resolveSettingsFilePath } from './storage/settings'
 import { openStorageForStartup } from './storage/startup'
 
 const isDev = !app.isPackaged
 
 /**
- * 允许用环境变量指定数据目录，便于端到端测试与便携模式
- * 不污染用户真实的书库。必须在 app.whenReady 之前设置。
+ * 数据目录：环境变量 > 便携模式（exe 同级有 portable.txt）> Electron 默认。
+ * 必须在 app.whenReady 之前设置，否则 setPath 不生效。
  */
-const userDataOverride = process.env['EBOOK_READER_USER_DATA']
-if (userDataOverride) app.setPath('userData', userDataOverride)
+const userData = applyUserDataOverride(
+  process.env['EBOOK_READER_USER_DATA'],
+  app.isPackaged,
+  (dir) => app.setPath('userData', dir)
+)
+if (userData.source === 'portable') console.info('[portable] 数据目录', userData.dir)
 
 function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -81,6 +87,12 @@ async function startApplication(): Promise<void> {
     userDataDir
   })
   registerSettingsIpc(ipcMain, openSettings(resolveSettingsFilePath(userDataDir)))
+  registerRuntimeIpc(ipcMain, {
+    app: app.getVersion(),
+    node: process.versions.node,
+    chrome: process.versions.chrome,
+    electron: process.versions.electron
+  })
   registerLibraryIpc(ipcMain, {
     repository: storage.library,
     fileStore,

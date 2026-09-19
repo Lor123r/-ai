@@ -23,13 +23,18 @@ describe('App', () => {
     expect(await screen.findByText('浏览器预览模式')).toBeInTheDocument()
   })
 
-  it('有 preload 注入时展示 Electron 运行时版本', async () => {
-    const cleanup = installFakeBridge({ node: '24.21.0', chrome: '140.0.7339.0', electron: '38.2.0' })
+  it('有 preload 注入时展示应用版本与 Electron 版本', async () => {
+    const cleanup = installFakeBridge({
+      app: '0.1.0',
+      node: '24.21.0',
+      chrome: '140.0.7339.0',
+      electron: '38.2.0'
+    })
 
     try {
       render(<App />)
 
-      expect(await screen.findByText('Electron 38.2.0 · Chromium 140.0.7339.0')).toBeInTheDocument()
+      expect(await screen.findByText('v0.1.0 · Electron 38.2.0')).toBeInTheDocument()
     } finally {
       cleanup()
     }

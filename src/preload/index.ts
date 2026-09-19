@@ -5,15 +5,15 @@ import {
   ANNOTATION_TRANSFER_CHANNELS,
   BOOK_CHANNELS,
   LIBRARY_CHANNELS,
+  RUNTIME_CHANNELS,
   SETTINGS_CHANNELS
 } from '@shared/ipc'
 
 const api: AppBridge = {
-  versions: {
-    node: process.versions.node,
-    chrome: process.versions.chrome,
-    electron: process.versions.electron
-  },
+  // 应用版本只有主进程知道（`app` 在 preload 里是 undefined，直接读会抛错并带走整个
+  // contextBridge），所以这里走一次 IPC。`process.versions.*` 在 preload 里可用，
+  // 但为了「一次调用拿全」还是并到主进程一起返回。
+  versions: ipcRenderer.invoke(RUNTIME_CHANNELS.versions),
   books: {
     list: () => ipcRenderer.invoke(BOOK_CHANNELS.list),
     get: (id) => ipcRenderer.invoke(BOOK_CHANNELS.get, id),

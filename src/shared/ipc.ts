@@ -45,6 +45,19 @@ export const ANNOTATION_TRANSFER_CHANNELS = {
 } as const
 
 /**
+ * 运行时版本信息的频道。
+ *
+ * 单独走 IPC 而不是在 preload 里直接读：`app` 是**主进程专属**模块，preload 跑在渲染
+ * 进程里，`electron.app` 是 undefined，`app.getVersion()` 会在 preload 加载时直接抛错，
+ * 把整个 `contextBridge.exposeInMainWorld` 一起带走 —— 表现是 `window.api` 变成
+ * undefined，界面上所有功能静默失效。`process.versions.*` 在 preload 里可用，但应用
+ * 自身版本只有主进程知道。
+ */
+export const RUNTIME_CHANNELS = {
+  versions: 'runtime:versions'
+} as const
+
+/**
  * 导入的文件不是可识别的交换格式时，主进程抛出的固定文案。
  *
  * 放在这里而不是两侧各写一份：它必须逐字一致 —— 渲染层靠 includes 认出它，才能把
@@ -71,6 +84,8 @@ export const ANNOTATION_EXPORT_BOUNDARY_MESSAGE = '不能把注解导出到应�
 export type AnnotationBridge = Pick<AnnotationRepository, 'listByBook' | 'save' | 'remove'>
 
 export interface RuntimeVersions {
+  /** 应用自身版本，来自 package.json 的 version（打包后由 electron-builder 写进产物）。 */
+  app: string
   node: string
   chrome: string
   electron: string
@@ -78,7 +93,8 @@ export interface RuntimeVersions {
 
 /** preload 通过 contextBridge 暴露给渲染进程的完整接口。 */
 export interface AppBridge {
-  versions: RuntimeVersions
+  /** 版本信息是异步的：应用版本只有主进程知道，见 RUNTIME_CHANNELS 的注释。 */
+  versions: Promise<RuntimeVersions>
   books: BookRepository
   annotations: AnnotationBridge
   annotationTransfer: AnnotationTransfer

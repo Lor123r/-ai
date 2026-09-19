@@ -10,6 +10,7 @@ import type { SettingsRepository } from '@core/ports/settingsRepository'
 import type { AppBridge, RuntimeVersions } from '@shared/ipc'
 
 export const DEFAULT_VERSIONS: RuntimeVersions = {
+  app: '0.1.0',
   node: '24.21.0',
   chrome: '140.0.0',
   electron: '38.2.0'
@@ -57,7 +58,7 @@ export function createFakeAnnotationTransfer(
 /** 造一个完整的 preload 桥，避免每个测试自己拼一份不完整的对象。 */
 export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): AppBridge {
   return {
-    versions,
+    versions: Promise.resolve(versions),
     books: new InMemoryBookRepository(),
     library: createFakeImporter(),
     cover: createFakeCoverReader(),
