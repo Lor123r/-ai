@@ -80,13 +80,17 @@ npm install --registry=https://registry.npmmirror.com
 
 应用**只检查、只提示，不下载也不安装**。启动时若发现更新源上有更高版本，书架顶部会出现一条提示，告诉用户去下载新版本；其余情况（已是最新、没配更新源、网络不通）界面上一个字都不显示。
 
-更新源走环境变量 `EBOOK_READER_UPDATE_FEED`，指向 electron-builder 生成的 `latest.yml`：
+更新源地址写在 `package.json` 的 `build.publish` 里，打包时由 electron-builder 写进 `resources/app-update.yml`，运行时读出来：
 
-```powershell
-$env:EBOOK_READER_UPDATE_FEED = "https://example.com/releases/latest.yml"
+```jsonc
+"publish": [
+  { "provider": "generic", "url": "https://example.com/ebook-reader/releases" }
+]
 ```
 
-**默认值是空字符串，即「这个构建不检查更新」。** 应用刻意不去猜这个地址——猜错的表现是静默地永远检查不到更新，比不检查更糟。开发态（`app.isPackaged === false`）一律不检查。详见第 7.13 章。
+应用会在这个地址后面拼上 `latest.yml`。**仓库里的地址是占位符**，要真正用起来得换成自己的发布目录，并把 `latest.yml` 与安装包一起放上去。改地址不用改代码。
+
+**读不到 `app-update.yml` 就是「这个构建不检查更新」**——开发态、以及没配 `build.publish` 的构建都会走到这里。应用刻意不去猜这个地址：猜错的表现是静默地永远检查不到更新，比不检查更糟。详见第 7.13 章。
 
 ### 打包
 
@@ -659,12 +663,13 @@ EPUB 把目录写成 NCX / nav 文档，TXT 什么都没有——这两件事都
 7. **`describeUpdate` 只有 `available` 产出文案。** 检查是启动时自动跑的，自动弹「已是最新」纯属打扰；网络不通也不该在书架上留一条红字。文案是 `有新版本 v0.2.0（当前 v0.1.0）`。
 8. **`checkForUpdate` 从不抛错**，所有失败落进 `unavailable`。调用方在启动路径上，一次网络异常不该让窗口出不来。
 9. **`parseLatestVersion` 不引 YAML 解析器。** electron-builder 的 `latest.yml` 结构固定，只认行首（允许缩进）的 `version:`，缩进过的 `  - url:` 不该命中。为一行内容引依赖不划算，多一个依赖就多一处供应链风险。
-10. **更新源走环境变量 `EBOOK_READER_UPDATE_FEED`，`DEFAULT_UPDATE_FEED` 留空。** 应用**不去猜**这个地址——猜错的表现是静默地永远检查不到更新，比不检查更糟。留空即「这个构建不检查更新」。
-11. **`registerUpdateIpc` 缓存的是 Promise 而不是结果。** 渲染层每次挂载书架都会问一次；缓存 Promise 让并发调用共用同一次请求，缓存结果则会让第二次调用看到 `null` 又去发一次。
-12. **`UPDATE_TIMEOUT_MS = 5000`**，用 `AbortSignal.timeout()`。启动路径上的网络请求必须有上限，否则断网时会挂很久。
-13. **`.update-banner` 用强调色（`#c8553d` / `#a2402c`）而不是 `.status-banner` 的中性色。** 它是一条「你可以做点什么」的消息，而导入结果只是「刚才发生了什么」的回执。
+10. **更新源地址写在 `package.json` 的 `build.publish` 里，运行时从 `resources/app-update.yml` 读。** 这样「发布到哪」是打包配置的一部分：改地址不用改代码，也不会出现「代码里写死一个地址、打包配置里写另一个」的分裂。地址指的是**发布目录**，应用自己拼上 `latest.yml`（`resolveFeedUrl` 容忍末尾有没有斜杠，否则用户少写一个 `/` 就会拼出 `.../releaseslatest.yml` 这种必然 404 的地址）。**读不到 `app-update.yml` 就是「这个构建不检查更新」**——开发态、以及没配 `build.publish` 的构建都会走到这里。应用刻意不去猜这个地址：猜错的表现是静默地永远检查不到更新，比不检查更糟。
+11. **`app-update.yml` 只有可更新的 target 才会生成。** 实测 `--dir` 与 `zip` 打出来的 `resources/` 里**没有**这份文件，只有 `nsis` 会写。所以「免安装目录版不检查更新」不是我们写的判据，而是 electron-builder 的行为——这一点必须真机验证过才知道，光看配置看不出来。
+12. **`registerUpdateIpc` 缓存的是 Promise 而不是结果。** 渲染层每次挂载书架都会问一次；缓存 Promise 让并发调用共用同一次请求，缓存结果则会让第二次调用看到 `null` 又去发一次。
+13. **`UPDATE_TIMEOUT_MS = 5000`**，用 `AbortSignal.timeout()`。启动路径上的网络请求必须有上限，否则断网时会挂很久。
+14. **`.update-banner` 用强调色（`#c8553d` / `#a2402c`）而不是 `.status-banner` 的中性色。** 它是一条「你可以做点什么」的消息，而导入结果只是「刚才发生了什么」的回执。
 
-> **`latest.yml` 是白捡的。** electron-builder 的 `nsis` target 本来就会生成 `latest.yml` 与 `.blockmap`，所以发布侧的元数据不需要额外做。缺的只有「把文件放到一个 HTTP 地址上」和「把地址告诉应用」这两步。
+> **`latest.yml` 是白捡的。** electron-builder 的 `nsis` target 本来就会生成 `latest.yml` 与 `.blockmap`，所以发布侧的元数据不需要额外做。缺的只有「把文件放到一个 HTTP 地址上」和「把地址配进 `build.publish`」这两步。
 
 ---
 
@@ -857,7 +862,7 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（80 文件 / 1157 用例）
+### 单元测试地图（80 文件 / 1174 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
@@ -865,13 +870,13 @@ return ePub(copy.buffer)
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
 | `core/adapters` | 9 | 170 | 契约测试、JSON 快照分片容错、串行化、四条写操作落盘失败时回滚内存、注解存档的宽容解析与并发写、`dropped` 的合并语义、交换格式的信封硬校验与条目投影复用、批量写入的容量边界与「一批只写一次盘」 |
 | `core/services` | 2 | 36 | 导入编排：去重、坏文件清理、书名兜底、写入书库失败时回收刚复制进来的正文与封面；注解导入的三步规划（重定向 → 按 id 去重 → 按容量截断）与报告计数 |
-| `main` | 15 | 224 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界、便携模式的判据与优先级（含未打包不启用、标记文件是目录不算数、`mkdir` 失败回落并留痕）、运行时版本频道的注册与透传、检查更新的四档失败（未打包 / 没配源 / 网络 / 内容读不懂）与「从不抛错」、`latest.yml` 的版本行解析（含缩进与引号）、更新频道的注册与「并发调用共用同一次请求」 |
+| `main` | 15 | 238 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界、便携模式的判据与优先级（含未打包不启用、标记文件是目录不算数、`mkdir` 失败回落并留痕）、运行时版本频道的注册与透传、检查更新的四档失败（未打包 / 没配源 / 网络 / 内容读不懂）与「从不抛错」、`latest.yml` 的版本行解析（含缩进与引号）、`app-update.yml` 的地址解析与 `latest.yml` 拼接（含末尾斜杠、文件缺失、目录不存在）、更新频道的注册与「并发调用共用同一次请求」 |
 | `renderer/data` | 6 | 19 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 与 `saveMany` 拒绝、桥缺失或没有交换能力时工厂回落为 `null` |
 | `renderer/reader` | 20 | 324 | 节流器、外观应用、目录读取、设置 hook、`EpubReaderView` 交互（含改字号重排后书签按钮仍按「当前页」判定）、TXT 正文字节解码与「编码可能不对」的判据、分栏分页算术、TXT 阅读器交互（含目录生成后按块内偏移跳转）与续读反解、共用外壳 `ReaderChrome`、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
 | `renderer/shelf` | 7 | 50 | 书架渲染、导入结果文案、封面占位、删除、排序与筛选工具条（受控、只回调自己那一项）、筛选后的计数与空态、更新提示（有新版本才显示，已是最新 / 检查失败 / IPC 抛错 / 没有桥时一个字都不显示，且只检查一次） |
 | 其他 | 2 | 8 | `App` 路由切换、`runtime` 版本标签（含「版本信息是异步的」这条回归） |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
-| `tests/unit/repo` | 4 | 41 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力；注解与书库存储层的源码级隔离；`tools/make-fixtures.ps1` 的 BOM 与语法、以及它生成的复核样本（覆盖 R21–R29、字节数与实际文件对账、块数、行尾归一化、三本长文字节互异）；打包配置（`main` 指向 `out/main/index.js`、`files` 只收 `out/**/*` 与 `package.json`、产物目录已 gitignore、只打 `dir` / `zip` / `nsis`、不用 `portable` target、`artifactName` 与 `appId` 是 ASCII、打包脚本先 build 且不进 verify、electron-builder 是 devDependency、NSIS 走向导且装用户目录、允许改安装目录、卸载保留数据、建桌面与开始菜单快捷方式） |
+| `tests/unit/repo` | 4 | 44 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力；注解与书库存储层的源码级隔离；`tools/make-fixtures.ps1` 的 BOM 与语法、以及它生成的复核样本（覆盖 R21–R29、字节数与实际文件对账、块数、行尾归一化、三本长文字节互异）；打包配置（`main` 指向 `out/main/index.js`、`files` 只收 `out/**/*` 与 `package.json`、产物目录已 gitignore、只打 `dir` / `zip` / `nsis`、不用 `portable` target、`artifactName` 与 `appId` 是 ASCII、打包脚本先 build 且不进 verify、electron-builder 是 devDependency、NSIS 走向导且装用户目录、允许改安装目录、卸载保留数据、建桌面与开始菜单快捷方式、更新源是 `generic` provider 且地址为 https 与 ASCII） |
 
 `tests/unit/reader/EpubReaderView.test.tsx`（55 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」「书签 toggle」「划线走 `selected` → 注入图层」「书签走 `mark` → 注入页边标记」「翻页收起浮条」这类交互。
 
@@ -1066,7 +1071,7 @@ test:e2e = build && playwright test
 | 41 | `b56acbe` | 功能 | 书架的排序与筛选：新增 `core/domain/shelfView.ts`（`ShelfSort` 五种、`ShelfFilter` 六种、`normalizeShelfView`、`compareShelfEntries`、`matchesShelfFilter`、`applyShelfView`），`ShelfEntry` 从渲染层 hook 搬进 core 再由 `useBooks.ts` 再导出；新增 `useShelfView` hook 与 `ShelfToolbar` 组件（两个原生 `<select>`），`Bookshelf` 接线后计数在筛选时显示「筛出 / 总数」、筛空时给专门的空态且保留工具条；中文书名走 `Intl.Collator('zh-Hans-CN')` 拿拼音序，无作者排最后，所有排序以 id 兜底；`reading` / `unread` / `finished` 三者互斥且穷尽全部；刻意不落盘（视图偏好不是内容，落盘要新增存储或污染语义是「阅读设置」的 `settings.json`），因此没有新 IPC、没有新存储 |
 | 42 | `a2dfa05` | 功能 | 打包分发与便携模式：接入 `electron-builder`（`package:dir` / `package:zip` 两个脚本，`files` 只收 `out/**/*` 与 `package.json`，产物落 `release/` 并 gitignore，只打 Windows 免安装目录与 zip，不做 NSIS 安装器、不做签名与自动更新）；新增 `src/main/storage/portable.ts`，判据是「exe 同级有 `portable.txt`」而不是「exe 同级可写」，数据落 `<exe 目录>/data`，优先级为环境变量 > 便携模式 > Electron 默认，`mkdir` 失败回落默认目录并留痕而不抛错，开发态（`app.isPackaged` 为假）不启用；`RuntimeVersions` 加 `app` 字段、版本标签改成 `v<应用版本> · Electron <版本>`（去掉 Chromium 与 Node），应用版本改走新增的 `runtime:versions` 频道（`app` 是主进程专属模块，preload 里读它会抛错并带走整个 contextBridge，表现是 `window.api` 变 undefined）；新增 `portable.test.ts`（17 条）、`runtimeIpc.test.ts`（3 条）与 `packaging.test.ts`（11 条） |
 | 43 | `b9722b5` | 功能 | NSIS 安装器：`build.win.target` 加 `nsis`，新增 `build.nsis` 配置块（`oneClick: false` 走向导、`perMachine: false` 装 `%LOCALAPPDATA%` 免管理员权限、`allowToChangeInstallationDirectory: true` 允许改安装目录、`deleteAppDataOnUninstall: false` 卸载保留用户数据、建桌面与开始菜单快捷方式、`shortcutName` 用中文产品名），新增 `package:installer` 脚本；不做开机自启（`runAfterFinish` 保留默认，与开机自启无关），仍不做代码签名与自动更新；`packaging.test.ts` 从 11 条扩到 17 条 |
-| 44 | `d94d490` | 功能 | 检查更新：新增 `core/domain/update.ts`（`parseVersion` / `compareVersions` / `evaluateUpdate` / `describeUpdate`，版本比较刻意放 core 因为 `1.10.0` 与 `1.9.0` 的字典序陷阱最容易写错）、`src/main/update/updateChecker.ts`（读 `latest.yml` 抠版本号，四档失败 `not-packaged` / `no-feed` / `network` / `malformed`，**从不抛错**）、`update:check` 频道（缓存 Promise 让并发调用共用同一次请求）与 `useUpdateNotice` hook；**只检查、只提示，不下载也不安装** —— 未签名的更新包在 Windows 上会被 `electron-updater` 拒绝，所以 `UpdateBridge` 只有一个 `check()`，刻意不摆 `download()` / `install()` 空壳；更新源走环境变量 `EBOOK_READER_UPDATE_FEED`，默认留空即「这个构建不检查更新」（应用不去猜地址，猜错的表现是静默地永远检查不到更新）；新增 `update.test.ts`（19 条）、`updateChecker.test.ts`（14 条）、`updateIpc.test.ts`（4 条）与 `BookshelfUpdate.test.tsx`（6 条） |
+| 44 | `d94d490` | 功能 | 检查更新：新增 `core/domain/update.ts`（`parseVersion` / `compareVersions` / `evaluateUpdate` / `describeUpdate`，版本比较刻意放 core 因为 `1.10.0` 与 `1.9.0` 的字典序陷阱最容易写错）、`src/main/update/updateChecker.ts`（读 `latest.yml` 抠版本号，四档失败 `not-packaged` / `no-feed` / `network` / `malformed`，**从不抛错**）、`update:check` 频道（缓存 Promise 让并发调用共用同一次请求）与 `useUpdateNotice` hook；**只检查、只提示，不下载也不安装** —— 未签名的更新包在 Windows 上会被 `electron-updater` 拒绝，所以 `UpdateBridge` 只有一个 `check()`，刻意不摆 `download()` / `install()` 空壳；更新源地址写在 `package.json` 的 `build.publish` 里（`generic` provider），打包时由 electron-builder 写进 `resources/app-update.yml`，运行时读出来再拼上 `latest.yml`，读不到就是「这个构建不检查更新」（应用不去猜地址，猜错的表现是静默地永远检查不到更新）；新增 `update.test.ts`（19 条）、`updateChecker.test.ts`（28 条）、`updateIpc.test.ts`（4 条）与 `BookshelfUpdate.test.tsx`（6 条） |
 
 ### 过程中沉淀下来的经验
 
@@ -1102,7 +1107,7 @@ test:e2e = build && playwright test
 - 单窗口，无标签页。
 - 打包做 Windows 免安装目录、zip 与 NSIS 安装器（`npm run package:dir` / `package:zip` / `package:installer`），不做代码签名。未签名的 exe 与安装器首次运行会被 SmartScreen 拦一下。
 - 安装器装到 `%LOCALAPPDATA%\Programs\电纸书阅读器`（免管理员权限），卸载时**保留**用户数据（见第 7.12 章第 8–10 条）。
-- 更新**只检查、只提示，不下载也不安装**（见第 7.13 章）：未签名的更新包在 Windows 上会被 `electron-updater` 拒绝，所以拿到代码签名证书之前自动安装这条路走不通。更新源走环境变量 `EBOOK_READER_UPDATE_FEED`，默认留空即「这个构建不检查更新」——**仓库里没有默认发布地址**，要真正用起来得自己把 `latest.yml` 放到一个 HTTP 地址上并配好这个变量。
+- 更新**只检查、只提示，不下载也不安装**（见第 7.13 章）：未签名的更新包在 Windows 上会被 `electron-updater` 拒绝，所以拿到代码签名证书之前自动安装这条路走不通。更新源地址写在 `package.json` 的 `build.publish` 里（打包时写进 `resources/app-update.yml`），**仓库里放的是占位地址**，要真正用起来得换成自己的发布目录并把 `latest.yml` 与安装包放上去。另外 `app-update.yml` 只有 `nsis` target 会生成，所以免安装目录版与 zip 版不检查更新。
 - 便携模式（exe 同级放 `portable.txt`）**没有端到端覆盖**：它的判据依赖 `app.isPackaged`，而 E2E 跑的是未打包的 `out/main/index.js`，所以这条路径只有单测 + 人工复核（见第 7.12 章第 11 条）。
 - 封面以 data URL 内联，大封面会略微增加内存占用（换来的是不必手工释放 object URL）。
 - 划线的进度百分比沿用「最近一次 `relocated` 的位置」做近似，不是划线本身在书里的位置。同章内翻页不影响，跨章标出来再回头翻页时会略有偏差。

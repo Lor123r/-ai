@@ -96,7 +96,7 @@ async function startApplication(): Promise<void> {
     electron: process.versions.electron
   })
   registerUpdateIpc(ipcMain, () =>
-    checkForUpdate(defaultUpdateProbe(app.isPackaged, app.getVersion()))
+    checkForUpdate(defaultUpdateProbe(app.isPackaged, app.getVersion(), process.resourcesPath))
   )
   registerLibraryIpc(ipcMain, {
     repository: storage.library,

@@ -66,6 +66,12 @@
         "nsis"
       ]
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://example.com/ebook-reader/releases"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "perMachine": false,
