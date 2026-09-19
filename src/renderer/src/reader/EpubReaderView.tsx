@@ -41,11 +41,21 @@ interface EpubReaderViewProps {
   now?: () => number
 }
 
-/** 最近一次 relocated 报出来的落点。书签只能基于它生成，绝不拿存档里的旧 cfi 顶上。 */
+/**
+ * 最近一次 relocated 报出来的落点。书签只能基于它生成，绝不拿存档里的旧 cfi 顶上。
+ *
+ * `page` / `totalPages` / `spineCount` 是给书签判据用的：改字号后同一个字符的 cfi
+ * 会变，但「还在这一页」这件事不变，所以判据落在页上而不是 cfi 上（见 isOnCurrentPage）。
+ */
 interface ReaderPosition {
   cfi: string
   chapterHref: string
   percent: number
+  chapterIndex: number | null
+  /** 全书章节数。算「一页占全书多少」要用它，缺了就只能退化成整章。 */
+  spineCount: number | null
+  page: number | null
+  totalPages: number | null
 }
 
 /** 当前选区，以及浮条该出现在哪。 */
@@ -53,6 +63,53 @@ interface ReaderSelection {
   cfi: string
   excerpt: string
   placement: SelectionPlacement
+}
+
+/**
+ * 一条书签是不是落在当前这一页上。
+ *
+ * 两道闸：章节 href 相等，且书签的百分比落在当前页的百分比区间里。
+ *
+ * 为什么不能只比 cfi：改字号后同一个字符的 cfi 会变，精确相等必然落空。
+ * 为什么不能只比 href：同一章里可以有好几枚书签，按章判会让第二枚加不出来。
+ * 为什么 href 也要比：percent 是浮点数、又被 clampPercent 夹到 [0,1]，
+ * 首尾两页的边界容易误判，href 相等这道闸把跨章误判直接归零。
+ *
+ * href 两边都为空时算相等：epub.js 偶尔不报 href，这时 percent 区间是唯一的判据，
+ * 比直接判「不在当前页」更贴近用户看到的东西。
+ */
+function isOnCurrentPage(bookmark: BookmarkAnnotation, position: ReaderPosition): boolean {
+  if (bookmark.chapterHref !== position.chapterHref) return false
+
+  const { start, end } = currentPageRange(position)
+  return bookmark.percent >= start && bookmark.percent < end
+}
+
+/**
+ * 当前页的百分比区间 `[start, end)`。
+ *
+ * `start` 就是 relocated 报出来的 percent（当前页起点）。一页占全书的比例是
+ * `1 / (spineCount * totalPages)`，所以 `end = start + 1 / (spineCount * totalPages)`。
+ *
+ * 页号或章节数缺失时退化成整章终点（`end` 落在下一章起点）—— 判据随之放宽成
+ * 「本章内有没有书签」，比原来的精确 cfi 相等宽松，但 percent 区间仍在起作用，
+ * 不会整章都算已加。
+ */
+function currentPageRange(position: ReaderPosition): { start: number; end: number } {
+  const start = position.percent
+  const { chapterIndex, spineCount, page, totalPages } = position
+
+  if (chapterIndex === null || spineCount === null || spineCount <= 0) {
+    return { start, end: start }
+  }
+
+  const chapterSpan = 1 / spineCount
+  const end =
+    page === null || totalPages === null || totalPages <= 0
+      ? (chapterIndex + 1) * chapterSpan
+      : start + chapterSpan / totalPages
+
+  return { start, end: Math.min(end, 1) }
 }
 
 export default function EpubReaderView({
@@ -150,7 +207,8 @@ export default function EpubReaderView({
       rendition.on('relocated', (location) => {
         if (!active) return
 
-        const locator = locatorFromRelocation(toRelocationInput(location, spineLength(book)), now())
+        const spineCount = spineLength(book)
+        const locator = locatorFromRelocation(toRelocationInput(location, spineCount), now())
         setPercent(locator.percent)
         writer?.push(locator)
 
@@ -162,7 +220,11 @@ export default function EpubReaderView({
             : {
                 cfi: locator.cfi,
                 chapterHref: location.start?.href ?? '',
-                percent: locator.percent
+                percent: locator.percent,
+                chapterIndex: locator.chapterIndex,
+                spineCount,
+                page: location.start?.displayed?.page ?? null,
+                totalPages: location.start?.displayed?.total ?? null
               }
         )
         // 翻页后选区已经不在屏幕上了，浮条必须收起来
@@ -272,10 +334,17 @@ export default function EpubReaderView({
 
   // 书签是 toggle：同一处再点一次就是取消。同一个 cfi 上出现两条标
   // 会让 epub.js 的 marks 表被覆盖，留下一枚清不掉的孤儿标记。
+  //
+  // 判据是「当前这一页上有没有书签」，不是「当前这个字符上有没有书签」：
+  // 改字号 / 行高 / 页边距之后同一个字符的 cfi 会变，按 cfi 精确相等去找
+  // 必然落空，按钮变回「加书签」，用户再点一下就在旧书签旁边加出第二条。
+  // 页号是 epub.js 亲自报的，不依赖任何 CFI 字符串解析。
   const bookmarkAt =
     position === null
       ? undefined
-      : annotations.find((item) => item.kind === 'bookmark' && item.cfi === position.cfi)
+      : annotations.find(
+          (item) => item.kind === 'bookmark' && isOnCurrentPage(item, position)
+        )
 
   // 划线同理：同 cfi 已有划线时浮条改成「改色 / 删除」，不做「同一段划两次」。
   // 用类型谓词收窄成 HighlightAnnotation，浮条才拿得到 color。

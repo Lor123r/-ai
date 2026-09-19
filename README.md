@@ -32,8 +32,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 迭代轮次 | 39 |
-| 单元/组件测试 | 71 个文件 / **1038** 个用例，全通过 |
+| 迭代轮次 | 40 |
+| 单元/组件测试 | 71 个文件 / **1042** 个用例，全通过 |
 | 端到端测试 | **20** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -455,7 +455,7 @@ flowchart TB
 
 1. **id 由渲染层生成，主进程只校验。** 渲染层为了做乐观更新不等 IPC 往返（见第 6 章 `id` 那条），主进程那边这枚 id 已经在信任边界之外，所以 `annotations:save` 会重新校验一遍长度与字符集。
 2. **图层同步是差分的，不是每次全清全画。** 每次 `annotations` 变化都 `reset()` 一遍会让整本书的 mark 闪一下，而且 epub.js 的 `annotations.add` 在同一 cfi 上重复添加时会覆盖内部引用、留下孤儿 mark（见第 10 章）。所以 [annotationHighlight.ts](src/renderer/src/reader/annotationHighlight.ts) 记着上一轮的 `Map<id, { cfi, color }>`，只推差分；`reset()` 只允许出现在销毁 rendition 的那段 cleanup 里。
-3. **书签是 toggle，划线是「点色块定色 / 原地改色」，删除是独立动作。** 书签在正文右侧页边画一枚竖丝带，头部按钮的文案仍按「当前这页有没有书签」判断；划线浮条的四个色块直接定色，选区上已有划线时同一排色块就是改色入口 —— `recolorHighlight` 改的是同一条注解，id 与 `createdAt` 都不动，因为「删了重划」会在同一 cfi 上换一个 id，而图层按 id 记账、epub.js 的 marks 表按 cfi 索引，两边错位就会留下一枚清不掉的孤儿 mark。点到的正好是当前颜色则零改动零写盘（只收起浮条），与仓储里「删除不存在的 id 不写盘」同一条约定。删除入口是浮条上**常驻**的「删除划线」，没有划线时 `disabled`：常驻而不是按状态换文案，是为了让控件个数恒定、浮条宽度成为常量，定位不会随状态漂移。删除要点两下（选中 + 点按钮），这是刻意的：MVP 没有做「点 mark 直接删」的命中测试。
+3. **书签是 toggle，划线是「点色块定色 / 原地改色」，删除是独立动作。** 书签在正文右侧页边画一枚竖丝带，头部按钮的文案按「当前这页有没有书签」判断 —— 判据是**同一章 + 书签百分比落在当前页的百分比区间内**，不是 cfi 精确相等（理由见下面「为什么判据落在页上」）。划线浮条的四个色块直接定色，选区上已有划线时同一排色块就是改色入口 —— `recolorHighlight` 改的是同一条注解，id 与 `createdAt` 都不动，因为「删了重划」会在同一 cfi 上换一个 id，而图层按 id 记账、epub.js 的 marks 表按 cfi 索引，两边错位就会留下一枚清不掉的孤儿 mark。点到的正好是当前颜色则零改动零写盘（只收起浮条），与仓储里「删除不存在的 id 不写盘」同一条约定。删除入口是浮条上**常驻**的「删除划线」，没有划线时 `disabled`：常驻而不是按状态换文案，是为了让控件个数恒定、浮条宽度成为常量，定位不会随状态漂移。删除要点两下（选中 + 点按钮），这是刻意的：MVP 没有做「点 mark 直接删」的命中测试。
 4. **书签标记是第二个同步器，且按 cfi 记账。** [annotationHighlight.ts](src/renderer/src/reader/annotationHighlight.ts) 里 `createBookmarkMarkSyncer` 与 `createHighlightSyncer` 并列、共用同一个图层、只靠 `type` 字符串（`'mark'` 与 `'highlight'`）隔离。分开而不是合并，是因为两边的记账键、失效判据、`reset` 语义都不同：划线按 id 记账（要处理「改色」这种原地变更），书签按 **cfi** 记账。后者不是随手挑的——epub.js 的 marks 表按 cfi 索引、`mark()` 又幂等，同一 cfi 上的多条书签本来就只对应一枚 DOM 标记；若按 id 记账，删掉其中一条会 `remove(cfi, 'mark')` 把这枚共用的标记摘掉，而幸存那条仍被当成「已经画过」，标记再也补不回来。按 cfi 记账天然得到正确的折叠语义：删到一条不剩时才真正摘掉。
 5. **翻页会收起浮条。** `relocated` 时清空选区状态，否则浮条会挂在一个已经不存在的选区上。浮条用 `position: absolute` 落在 `.reader__viewport` 内，位置不是直接拿选区坐标——选区坐标在 **iframe 内部**，必须先补上 iframe 元素相对容器的偏移。算完还有三种收口：上方放不下就翻到选区下方；左右夹在容器内；上下都放不下就落回容器顶部（分栏排版里这是常态，见 [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) 的 `fallback`）。
 6. **注解抽屉同时承担「跳回原文」和「删除」。** 没有它的话划线划下去就没有任何删除入口，书签的 toggle 也只能在同一页上生效，而且注解列表本身不可见。抽屉里的条目用摘录当按钮文案（没有摘录的划线、所有书签就退化成「百分比 + 类型」），保证不会出现空白按钮。
@@ -465,6 +465,14 @@ flowchart TB
 - **样式写在 [global.css](src/renderer/src/styles/global.css) 而不是正文样式表里。** epub.js 的 `mark()` 产出的 `<a ref="epubjs-mk">` 被 append 到宿主文档的 `.epub-view` 上（**不在 iframe 内**），`rendition.themes.override` 命中不到它。代价是零尺寸元素在写错文件时会静默失效，所以 E2E 用 `toBeVisible()` 把这条钉住。
 - **必须 `pointer-events: none`。** epub.js 无条件给每枚 mark 挂 `click` / `touchstart`，不关掉的话页边那条 6px 的丝带会吃掉落到它上面的点击与划选手势。
 - **翻页不需要重画。** 标记落在**内容坐标系**里（`.epub-view` 的宽度是整段正文的宽度，翻页只是容器滚动），可见性纯粹由 `.reader__viewport` 的 `overflow: hidden` 裁剪，所以既不需要 `relocated` 钩子、也不会出现「重画 → 触发 relocated → 再重画」的时序风险。这是书签同步 effect 刻意**不把 `position` 放进依赖**的原因：放进去只会让每次翻页都白跑一遍全表差分。
+
+**为什么判据落在页上，而不是 cfi 精确相等。** 早先 `bookmarkAt` 用的是「当前落点的 cfi 与书签的 cfi 精确相等」。这条判据在改字号 / 行高 / 页边距 / 字体之后必然失效：`position.cfi` 来自 `relocated` 事件的 `start.cfi`，是**当前视口左上角那个字符**的 CFI；重排后同一个字符落到不同分栏位置，`start.cfi` 就变了。于是头部按钮变回「加书签」，用户再点一下就在旧书签旁边加出第二条 —— 页边两枚几乎重叠的竖丝带，抽屉里两条重复条目，而标记本身没有命中测试、只能从抽屉删。判据改成「**当前这一页上有没有书签**」：两道闸是 `chapterHref` 相等 **且** 书签 `percent` 落在当前页的百分比区间 `[start, end)` 内，`start` 取 `position.percent`，`end = start + (1 / spineCount) / totalPages`（一页占全书的比例是 `1 / (spineCount * totalPages)`）。页号或章节数缺失时退化成整章终点 `(chapterIndex + 1) / spineCount`；`chapterIndex` 或 `spineCount` 也拿不到时退化成空区间，即保守地判「没有书签」。
+
+不能改用 CFI 字符串前缀，有两个理由：同一章内可以有多个书签，按章节前缀匹配会让「本章已有书签」把整章都判成已加、第二枚再也加不出来；而且 CFI 前缀的粒度不可靠 —— `epubcfi(/6/12!/4/2)` 与 `epubcfi(/6/12!/4/10)` 的共同前缀是 `epubcfi(/6/12!/4/`，但 `/2` 与 `/10` 是同层兄弟节点，语义上可能隔好几页，前缀取多长都是拍脑袋。
+
+也**刻意不给 `BookmarkAnnotation` 加 `page` 字段**：页号不是稳定锚点（改字号后总页数变，存下的 `page: 6` 在新排版下可能对应完全不同的内容），加字段还要连带改 `createBookmark` / `reviveAnnotation` / 快照版本兼容 / 导入校验，收益为零。判据只需要「当前页有没有书签」，不需要「书签在第几页」—— 后者要靠 `rendition.display(cfi)` 反查，代价高且异步。所以这一轮**没有新 IPC 频道，也没动 `annotation.ts` / `annotationSnapshot.ts` / `annotationTransfer.ts`**。
+
+诚实记账：这个修法把「改字号后 100% 加出第二条」降到「改字号后跨页边界时可能加出第二条」。不是完美解，但把必然缺陷降成偶发缺陷，代价是零。
 
 `AnnotationDrawer` 还有一条容易写错的分支：**「读不到存档」和「这本书还没有注解」是两种不同的空态**，前者显示 `ANNOTATIONS_UNAVAILABLE_MESSAGE` 且不显示空态文案，也不能让界面宣称「这本书还没有注解」——那同样是假话（磁盘上可能正躺着一份读不出来的存档）。
 
@@ -750,7 +758,7 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（71 文件 / 1030 用例）
+### 单元测试地图（71 文件 / 1042 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
@@ -760,7 +768,7 @@ return ePub(copy.buffer)
 | `core/services` | 2 | 36 | 导入编排：去重、坏文件清理、书名兜底、写入书库失败时回收刚复制进来的正文与封面；注解导入的三步规划（重定向 → 按 id 去重 → 按容量截断）与报告计数 |
 | `main` | 11 | 185 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界 |
 | `renderer/data` | 6 | 19 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 与 `saveMany` 拒绝、桥缺失或没有交换能力时工厂回落为 `null` |
-| `renderer/reader` | 20 | 320 | 节流器、外观应用、目录读取、设置 hook、`EpubReaderView` 交互、TXT 正文字节解码与「编码可能不对」的判据、分栏分页算术、TXT 阅读器交互（含目录生成后按块内偏移跳转）与续读反解、共用外壳 `ReaderChrome`、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
+| `renderer/reader` | 20 | 324 | 节流器、外观应用、目录读取、设置 hook、`EpubReaderView` 交互（含改字号重排后书签按钮仍按「当前页」判定）、TXT 正文字节解码与「编码可能不对」的判据、分栏分页算术、TXT 阅读器交互（含目录生成后按块内偏移跳转）与续读反解、共用外壳 `ReaderChrome`、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
 | `renderer/shelf` | 5 | 31 | 书架渲染、导入结果文案、封面占位、删除 |
 | 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
@@ -955,6 +963,7 @@ test:e2e = build && playwright test
 | 37 | `ac0666c` | 功能 | TXT 的目录生成与编码提示：`decodeText` 改为回报 `{ text, encoding, uncertain }`（`uncertain` 取「解出来的正文里有没有 U+FFFD」），解不干净时在头部下面加一行非阻断的 `role="status"` 提示；新增 core 层 `textToc.ts`，按「第 N 章」这类整行标题现算目录（一个块里的多个标题也认，全都认不出就退化成按块首列），目录抽屉对 `TocItem` 泛型化后与 EPUB 共用（`TocEntry` 相应改为 `extends TocItem`），TXT 跳转按块内偏移换算页码（新增 `blockPageFromOffset`，以及把「跳到当前块」这种状态不变的情况叫醒的 `jumpSeq`），并补齐单测与端到端用例 |
 | 38 | `9caf398` | 规范 | 人工复核样本生成器入仓：新增 `tools/make-fixtures.ps1`，八个整本 TXT 覆盖 R21–R29（20MB 越界样本、0 字节、纯空白、三本行尾各异的六段长文、50 万字符的单行、短文），样本一律不带 BOM 以便压编码回退那条路径，正文由固定句子池拼接保证字节可复现，三本长文的字节必须互不相同才不会被 sha256 去重顶掉；文件名里的编号统一改成「真的是它服务的条目」（第一版按生成顺序起名，`R22-纯空白` 实际服务 R23、`R26-超长单行` 实际服务 R27）；新增 `tests/unit/repo/makeFixtures.test.ts` 真的跑一遍脚本再用 core 的 `splitTextIntoBlocks` 复核产物（脚本自身的 UTF-8 BOM 与 PS 5.1 语法限制也一并钉住），README 第 11 章补一节说明；顺带修掉 `EpubReaderView.test.tsx` 里两处「正文样式的副作用还没刷就断言」的竞态（`passive effect` 在提交之后才刷，「阅读中」一进 DOM 就断言会偶发抢在它前面） |
 | 39 | `b0305b2` | 功能 | TXT 目录的标题模式扩充：`textToc.ts` 的标题正则从字面量改成按 `CN_NUM` / `ROMAN_NUM` / `CN_UNIT` 三个常量拼装，后缀补上「话」「幕」与「终篇」，序号支持罗马数字（`第Ⅰ章`）与后置写法（`卷五`、`章三`），另加 `Chapter N` / `Part N` 这类英文标题；新增 `NUMBERED_LINE` 单独认纯编号行（`01. 起点`、`2、转折`、`三：归途`、`4 终局`），并刻意要求序号后必须跟分隔符且标题正文非空，免得把页码、年份、光秃秃的 `01` 列进目录；两条规则各扫一遍再按块内偏移合并去重，同一行被同时认到只出一条 |
+| 40 | — | 功能 | 书签跨重排的位置修正：`bookmarkAt` 的判据从「cfi 精确相等」改成「同一章 + 书签百分比落在当前页区间内」，`ReaderPosition` 补上 `chapterIndex` / `spineCount` / `page` / `totalPages`，新增 `isOnCurrentPage` 与 `currentPageRange` 两个纯函数；改字号后 `relocated` 报出的 `start.cfi` 会变，旧判据必然失效、再点一下就在旧书签旁边加出第二条，新判据把这条必然缺陷降成「跨页边界时偶发」；刻意不给 `BookmarkAnnotation` 加 `page` 字段（页号不是稳定锚点，且要连带改快照版本兼容与导入校验），因此没有新 IPC 频道 |
 
 ### 过程中沉淀下来的经验
 
@@ -988,11 +997,12 @@ test:e2e = build && playwright test
 - 未做打包分发（`electron-builder` 等）。
 - 封面以 data URL 内联，大封面会略微增加内存占用（换来的是不必手工释放 object URL）。
 - 划线的进度百分比沿用「最近一次 `relocated` 的位置」做近似，不是划线本身在书里的位置。同章内翻页不影响，跨章标出来再回头翻页时会略有偏差。
+- 书签的「当前页」判据是「同一章 + 百分比落在当前页区间内」，改字号重排后**跨页边界**时仍可能加出第二条相邻书签（改字号后 100% 加出第二条的必然缺陷已经修掉，见第 7.7 章）。
 
 ### 后续方向
 
 1. **TXT 的目录质量** —— 生成逻辑已经落地（见第 7.10 章）：靠「第 X 章」这类行文规律现算，认不出标题就退化成按块首列。标题模式已扩充到卷/话/回/幕、罗马数字、后置序号、英文 `Chapter N` 与纯编号行；这条退化路径仍然只是能用，谈不上好用，下一步可以让用户点一下「把这一行设为章节」手工补目录。
-2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[EpubReaderView.tsx](src/renderer/src/reader/EpubReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。剩下的都是体验层：跨分栏重排后的位置修正（改字号后同一个位置的 CFI 会变，`bookmarkAt` 的精确匹配就可能加出第二条相邻书签）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
+2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[EpubReaderView.tsx](src/renderer/src/reader/EpubReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。跨分栏重排后的位置修正已经落地：`bookmarkAt` 的判据从 cfi 精确相等改成「同一章 + 百分比落在当前页区间内」，改字号后不会再必然加出第二条相邻书签（跨页边界仍可能，见第 14 章当前限制）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序/筛选、分组、标签。
 5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。

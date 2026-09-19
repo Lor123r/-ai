@@ -735,6 +735,13 @@ describe('EpubReaderView 书签与划线', () => {
     return screen.getByRole('complementary', { name: '注解' })
   }
 
+  /** 打开设置抽屉改一次字号再关掉，模拟「用户调了排版」这个动作。 */
+  function bumpFontSize(): void {
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '增大字号' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭设置' }))
+  }
+
   /** 读不到存档的仓储：所有动作都失败，与「没有注解」必须区分开。 */
   function unreadableRepository(): AnnotationRepository {
     const reason = new Error('存档损坏')
@@ -772,6 +779,77 @@ describe('EpubReaderView 书签与划线', () => {
       expect(screen.getByRole('button', { name: '加书签' })).toBeInTheDocument()
     })
     await expect(annotations.listByBook('book-1')).resolves.toEqual([])
+  })
+
+  /**
+   * 改字号后同一个字符的 cfi 会变，但「还在这一页」不变。
+   * 判据落在页上，所以按钮必须仍然是「移除书签」，再点一下是取消而不是加第二条。
+   */
+  it('改字号重排后按钮仍是「移除书签」，不会在旧书签旁边加出第二条', async () => {
+    const { epub, annotations } = await renderReady()
+    await relocate(epub)
+
+    fireEvent.click(screen.getByRole('button', { name: '加书签' }))
+    await screen.findByRole('button', { name: '移除书签' })
+
+    bumpFontSize()
+
+    // 重排后 epub.js 报出的是另一个 cfi，但页号与百分比都还在同一页上
+    epub.relocate({
+      start: { index: 5, cfi: 'epubcfi(/6/12!/4/8)', displayed: { page: 6, total: 11 } },
+      atEnd: false
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '移除书签' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: '加书签' })).not.toBeInTheDocument()
+    await expect(annotations.listByBook('book-1')).resolves.toHaveLength(1)
+  })
+
+  it('同一页上有两条书签时，点一次只删掉一条', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createBookmark({ id: 'bm-1', bookId: 'book-1', cfi: LOCATION_CFI, percent: 0.55 }, 0)
+    )
+    await repository.save(
+      createBookmark({ id: 'bm-2', bookId: 'book-1', cfi: 'epubcfi(/6/12!/4/8)', percent: 0.55 }, 1)
+    )
+    const { epub, annotations } = await renderReady({ annotationRepository: repository })
+    await relocate(epub)
+
+    fireEvent.click(await screen.findByRole('button', { name: '移除书签' }))
+
+    await waitFor(async () => {
+      await expect(annotations.listByBook('book-1')).resolves.toHaveLength(1)
+    })
+  })
+
+  it('同一章但下一页的书签不算当前页', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    // 同一章（index 5）、同一 href，但百分比落在后面几页上
+    await repository.save(
+      createBookmark({ id: 'bm-1', bookId: 'book-1', cfi: LOCATION_CFI, percent: 0.58 }, 0)
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+    await relocate(epub)
+
+    expect(screen.getByRole('button', { name: '加书签' })).toBeInTheDocument()
+  })
+
+  it('epub.js 没报页号时退化成整章，同章的书签仍算当前页', async () => {
+    const repository = new InMemoryAnnotationRepository()
+    await repository.save(
+      createBookmark({ id: 'bm-1', bookId: 'book-1', cfi: LOCATION_CFI, percent: 0.55 }, 0)
+    )
+    const { epub } = await renderReady({ annotationRepository: repository })
+
+    // 没有 displayed：page / totalPages 都是 null
+    epub.relocate({ start: { index: 5, cfi: LOCATION_CFI }, atEnd: false })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '移除书签' })).toBeInTheDocument()
+    })
   })
 
   it('打开书时把存档里的划线画回正文', async () => {
