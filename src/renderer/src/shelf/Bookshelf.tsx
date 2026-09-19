@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { formatPercentLabel, isBookFinished } from '@core/domain/progress'
+import { applyShelfView } from '@core/domain/shelfView'
 import { useBookImporter } from '@renderer/data/BookImporterProvider'
 import { useBooks, type ShelfEntry } from '@renderer/hooks/useBooks'
 import { formatRuntimeLabel, getRuntimeVersions } from '@renderer/platform/runtime'
 import BookCover from './BookCover'
+import ShelfToolbar from './ShelfToolbar'
 import { describeImportFailures, describeImportResult } from './importNotice'
+import { useShelfView } from './useShelfView'
 
 function progressText(locator: ShelfEntry['locator']): string {
   if (!locator) return '尚未开始'
@@ -62,11 +65,14 @@ function BookCard({ entry, onRemove, onOpen }: BookCardProps): React.JSX.Element
 
 export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps): React.JSX.Element {
   const { entries, status, error, reload, removeBook } = useBooks()
+  const { view, setSort, setFilter } = useShelfView()
   const importer = useBookImporter()
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const runtimeLabel = formatRuntimeLabel(getRuntimeVersions())
+  const visible = applyShelfView(entries, view)
+  const filtered = view.filter !== 'all'
 
   async function handleRemove(id: string): Promise<void> {
     try {
@@ -101,7 +107,11 @@ export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps):
       <header className="app-header">
         <h1 className="app-header__title">书架</h1>
         <span className="app-header__meta">
-          {status === 'ready' && entries.length > 0 ? <span className="app-header__count">{entries.length} 本</span> : null}
+          {status === 'ready' && entries.length > 0 ? (
+            <span className="app-header__count">
+              {filtered ? `${visible.length} / ${entries.length} 本` : `${entries.length} 本`}
+            </span>
+          ) : null}
           {importer ? (
             <button
               type="button"
@@ -127,8 +137,14 @@ export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps):
           <p className="empty-hint">书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。</p>
         ) : null}
         {status === 'ready' && entries.length > 0 ? (
+          <ShelfToolbar view={view} onSortChange={setSort} onFilterChange={setFilter} />
+        ) : null}
+        {status === 'ready' && entries.length > 0 && visible.length === 0 ? (
+          <p className="empty-hint">没有符合条件的书，换个筛选试试。</p>
+        ) : null}
+        {status === 'ready' && visible.length > 0 ? (
           <ul className="shelf">
-            {entries.map((entry) => (
+            {visible.map((entry) => (
               <BookCard
                 key={entry.book.id}
                 entry={entry}

@@ -138,6 +138,35 @@ body {
   list-style: none;
 }
 
+.shelf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  align-self: stretch;
+}
+
+.shelf-toolbar__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shelf-toolbar__label {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.shelf-toolbar__select {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .book-card {
   /* 书名按钮的覆盖层要以此为定位基准 */
   position: relative;

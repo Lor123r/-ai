@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Book } from '@core/domain/book'
-import type { ReadingLocator } from '@core/domain/progress'
+import type { ShelfEntry } from '@core/domain/shelfView'
 import { useBookRepository } from '../data/BookRepositoryProvider'
 
-export interface ShelfEntry {
-  book: Book
-  locator: ReadingLocator | null
-}
+export type { ShelfEntry }
 
 export type ShelfStatus = 'loading' | 'ready' | 'error'
 

@@ -160,4 +160,119 @@ describe('Bookshelf', () => {
     expect(screen.getByText('没')).toBeInTheDocument()
     expect(read.mock.calls.map(([id]) => id).sort()).toEqual(['a', 'b'])
   })
+
+  it('空书架不渲染排序筛选工具条', async () => {
+    renderShelf(new InMemoryBookRepository())
+
+    await screen.findByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')
+    expect(screen.queryByRole('combobox', { name: '排序' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '筛选' })).not.toBeInTheDocument()
+  })
+
+  it('有书时渲染工具条，默认按最近阅读排', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('old', { title: '旧书' }))
+    await repo.save(seed('new', { title: '新书' }))
+    await repo.markOpened('old', 9_999)
+
+    renderShelf(repo)
+
+    await screen.findByRole('heading', { name: '旧书' })
+    expect(screen.getByRole('combobox', { name: '排序' })).toHaveValue('recent')
+    expect(screen.getByRole('combobox', { name: '筛选' })).toHaveValue('all')
+  })
+
+  it('切到按书名排序后顺序变化', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: 'C 书' }))
+    await repo.save(seed('b', { title: 'A 书' }))
+    await repo.save(seed('c', { title: 'B 书' }))
+
+    renderShelf(repo)
+    await screen.findByRole('heading', { name: 'C 书' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: '排序' }), { target: { value: 'title' } })
+
+    const titles = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent)
+    expect(titles).toEqual(['A 书', 'B 书', 'C 书'])
+  })
+
+  it('切到只看未开始后只剩没读过的书', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: '读过的书' }))
+    await repo.save(seed('b', { title: '没读过的书' }))
+    await repo.saveLocator('a', createLocator({ percent: 0.4 }))
+
+    renderShelf(repo)
+    await screen.findByRole('heading', { name: '读过的书' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: '筛选' }), { target: { value: 'unread' } })
+
+    expect(screen.getByRole('heading', { name: '没读过的书' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '读过的书' })).not.toBeInTheDocument()
+  })
+
+  it('筛选后计数显示「筛出 / 总数」', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: '读过的书' }))
+    await repo.save(seed('b', { title: '没读过的书' }))
+    await repo.saveLocator('a', createLocator({ percent: 0.4 }))
+
+    renderShelf(repo)
+    await screen.findByText('2 本')
+
+    fireEvent.change(screen.getByRole('combobox', { name: '筛选' }), { target: { value: 'unread' } })
+
+    expect(screen.getByText('1 / 2 本')).toBeInTheDocument()
+  })
+
+  it('筛选后为空时给出专门的空态，工具条仍在', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: '没读过的书' }))
+
+    renderShelf(repo)
+    await screen.findByRole('heading', { name: '没读过的书' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: '筛选' }), { target: { value: 'finished' } })
+
+    expect(screen.getByText('没有符合条件的书，换个筛选试试。')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '没读过的书' })).not.toBeInTheDocument()
+    // 工具条必须还在，否则用户没法切回「全部」
+    expect(screen.getByRole('combobox', { name: '筛选' })).toBeInTheDocument()
+    // 也不能说「书架还是空的」——那是假话
+    expect(screen.queryByText('书架还是空的，导入 EPUB 或 TXT 后就会出现在这里。')).not.toBeInTheDocument()
+  })
+
+  it('按格式筛选只留对应格式的书', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: 'EPUB 书' }))
+    await repo.save({ ...seed('b', { title: 'TXT 书' }), format: 'txt' })
+
+    renderShelf(repo)
+    await screen.findByRole('heading', { name: 'EPUB 书' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: '筛选' }), { target: { value: 'txt' } })
+
+    expect(screen.getByRole('heading', { name: 'TXT 书' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'EPUB 书' })).not.toBeInTheDocument()
+  })
+
+  it('筛选状态下删除书，计数与列表一起更新', async () => {
+    const repo = new InMemoryBookRepository()
+    await repo.save(seed('a', { title: '读过的书' }))
+    await repo.save(seed('b', { title: '没读过的书' }))
+    await repo.saveLocator('a', createLocator({ percent: 0.4 }))
+
+    renderShelf(repo)
+    await screen.findByRole('heading', { name: '读过的书' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: '筛选' }), { target: { value: 'unread' } })
+    fireEvent.click(screen.getByRole('button', { name: '删除《没读过的书》' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: '没读过的书' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('0 / 1 本')).toBeInTheDocument()
+    expect(screen.getByText('没有符合条件的书，换个筛选试试。')).toBeInTheDocument()
+  })
 })
