@@ -68,8 +68,9 @@
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://example.com/ebook-reader/releases"
+        "provider": "github",
+        "owner": "Lor123r",
+        "repo": "-ai"
       }
     ],
     "nsis": {

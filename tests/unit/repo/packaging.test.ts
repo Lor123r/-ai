@@ -28,7 +28,7 @@ interface PackageJson {
     directories: { output: string }
     files: string[]
     win: { target: string[] }
-    publish: { provider: string; url: string }[]
+    publish: { provider: string; owner?: string; repo?: string; url?: string }[]
     nsis: {
       oneClick: boolean
       perMachine: boolean
@@ -90,24 +90,30 @@ describe('打包目标', () => {
 })
 
 describe('更新源', () => {
-  it('配了 generic provider 的发布地址', () => {
+  it('配了 github provider 的发布地址', () => {
     // 打包时 electron-builder 会把它写进 resources/app-update.yml，
     // 运行时由 src/main/update/updateChecker.ts 读出来
     expect(pkg.build.publish).toHaveLength(1)
-    expect(pkg.build.publish[0].provider).toBe('generic')
+    expect(pkg.build.publish[0].provider).toBe('github')
   })
 
-  it('发布地址是 https 且不带末尾斜杠', () => {
-    const url = pkg.build.publish[0].url
-
-    expect(url).toMatch(/^https:\/\//)
-    // 末尾斜杠会让拼接出的 latest.yml 地址多一个 `/`，虽然 resolveFeedUrl 容忍，
-    // 但配置本身保持规范更省心
-    expect(url).not.toMatch(/\/$/)
+  it('owner 与 repo 指向真实仓库', () => {
+    // 私有仓库的 Release 附件需要认证，匿名 fetch 拿不到 latest.yml，
+    // 所以检查更新只在公开仓库上成立
+    expect(pkg.build.publish[0].owner).toBe('Lor123r')
+    expect(pkg.build.publish[0].repo).toBe('-ai')
   })
 
-  it('发布地址是 ASCII，不含中文', () => {
-    expect(pkg.build.publish[0].url).toMatch(/^[\x20-\x7e]+$/)
+  it('owner 与 repo 是 ASCII，不含中文', () => {
+    const { owner, repo } = pkg.build.publish[0]
+
+    expect(owner).toMatch(/^[\x20-\x7e]+$/)
+    expect(repo).toMatch(/^[\x20-\x7e]+$/)
+  })
+
+  it('不再残留 generic provider 的占位地址', () => {
+    // 占位地址会让应用静默地检查失败，比不检查更糟
+    expect(JSON.stringify(pkg.build.publish)).not.toMatch(/example\.com/)
   })
 })
 
