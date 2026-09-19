@@ -119,6 +119,19 @@ body {
   font-size: 13px;
 }
 
+/* 更新提示用强调色而不是 status-banner 的中性色：它是一条「你可以做点什么」的
+   消息，而导入结果只是「刚才发生了什么」的回执。 */
+.update-banner {
+  margin: 0;
+  align-self: stretch;
+  padding: 8px 12px;
+  border: 1px solid #c8553d;
+  border-radius: 6px;
+  background: #fff;
+  color: #a2402c;
+  font-size: 13px;
+}
+
 .error-banner {
   margin: 0;
   padding: 10px 28px;

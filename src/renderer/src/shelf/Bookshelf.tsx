@@ -5,6 +5,7 @@ import { useBookImporter } from '@renderer/data/BookImporterProvider'
 import { useBooks, type ShelfEntry } from '@renderer/hooks/useBooks'
 import { formatRuntimeLabel } from '@renderer/platform/runtime'
 import { useRuntimeVersions } from '@renderer/platform/useRuntimeVersions'
+import { useUpdateNotice } from '@renderer/platform/useUpdateNotice'
 import BookCover from './BookCover'
 import ShelfToolbar from './ShelfToolbar'
 import { describeImportFailures, describeImportResult } from './importNotice'
@@ -72,6 +73,7 @@ export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps):
   const [notice, setNotice] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const runtimeLabel = formatRuntimeLabel(useRuntimeVersions())
+  const updateNotice = useUpdateNotice()
   const visible = applyShelfView(entries, view)
   const filtered = view.filter !== 'all'
 
@@ -132,6 +134,11 @@ export default function Bookshelf({ onOpen = () => undefined }: BookshelfProps):
         {status === 'ready' && notice ? (
           <p className="status-banner" role="status">
             {notice}
+          </p>
+        ) : null}
+        {updateNotice ? (
+          <p className="update-banner" role="status">
+            {updateNotice}
           </p>
         ) : null}
         {status === 'ready' && entries.length === 0 ? (

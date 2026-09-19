@@ -5,10 +5,12 @@ import { registerBooksIpc } from './ipc/booksIpc'
 import { registerLibraryIpc } from './ipc/libraryIpc'
 import { registerRuntimeIpc } from './ipc/runtimeIpc'
 import { registerSettingsIpc } from './ipc/settingsIpc'
+import { registerUpdateIpc } from './ipc/updateIpc'
 import { FileBookStore } from './import/fileBookStore'
 import { applyUserDataOverride } from './storage/portable'
 import { openSettings, resolveSettingsFilePath } from './storage/settings'
 import { openStorageForStartup } from './storage/startup'
+import { checkForUpdate, defaultUpdateProbe } from './update/updateChecker'
 
 const isDev = !app.isPackaged
 
@@ -93,6 +95,9 @@ async function startApplication(): Promise<void> {
     chrome: process.versions.chrome,
     electron: process.versions.electron
   })
+  registerUpdateIpc(ipcMain, () =>
+    checkForUpdate(defaultUpdateProbe(app.isPackaged, app.getVersion()))
+  )
   registerLibraryIpc(ipcMain, {
     repository: storage.library,
     fileStore,

@@ -5,6 +5,7 @@ import type { BookContentReader } from '../core/ports/bookContent'
 import type { SettingsRepository } from '../core/ports/settingsRepository'
 import type { AnnotationRepository } from '../core/ports/annotationRepository'
 import type { AnnotationTransfer } from '../core/ports/annotationTransfer'
+import type { UpdateCheckResult } from '../core/domain/update'
 
 /** IPC 频道名集中定义，避免主进程与 preload 各写一份字符串而写错。 */
 export const BOOK_CHANNELS = {
@@ -58,6 +59,16 @@ export const RUNTIME_CHANNELS = {
 } as const
 
 /**
+ * 检查更新的频道。
+ *
+ * 只有「查」没有「装」：未签名的更新包在 Windows 上会被 electron-updater 拒绝，
+ * 所以这一轮只做到「告诉用户有新版本」，下载与安装仍由用户手动完成。
+ */
+export const UPDATE_CHANNELS = {
+  check: 'update:check'
+} as const
+
+/**
  * 导入的文件不是可识别的交换格式时，主进程抛出的固定文案。
  *
  * 放在这里而不是两侧各写一份：它必须逐字一致 —— 渲染层靠 includes 认出它，才能把
@@ -91,10 +102,22 @@ export interface RuntimeVersions {
   electron: string
 }
 
+/**
+ * 渲染层能看到的更新接口。
+ *
+ * 刻意只有一个 `check()`：这一轮不做下载与安装（未签名的更新包会被 Windows 拒绝），
+ * 所以没有 `download()` / `install()` 可暴露。等签名到位再加，那时这里会多两个方法，
+ * 而不是现在先摆两个空壳。
+ */
+export interface UpdateBridge {
+  check: () => Promise<UpdateCheckResult>
+}
+
 /** preload 通过 contextBridge 暴露给渲染进程的完整接口。 */
 export interface AppBridge {
   /** 版本信息是异步的：应用版本只有主进程知道，见 RUNTIME_CHANNELS 的注释。 */
   versions: Promise<RuntimeVersions>
+  update: UpdateBridge
   books: BookRepository
   annotations: AnnotationBridge
   annotationTransfer: AnnotationTransfer

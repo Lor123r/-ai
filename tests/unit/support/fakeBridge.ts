@@ -8,12 +8,23 @@ import type { BookContentReader } from '@core/ports/bookContent'
 import type { BookImporter } from '@core/ports/bookImporter'
 import type { SettingsRepository } from '@core/ports/settingsRepository'
 import type { AppBridge, RuntimeVersions } from '@shared/ipc'
+import type { UpdateCheckResult } from '@core/domain/update'
 
 export const DEFAULT_VERSIONS: RuntimeVersions = {
   app: '0.1.0',
   node: '24.21.0',
   chrome: '140.0.0',
   electron: '38.2.0'
+}
+
+/** 默认更新检查返回「没有新版本」，测试需要时可覆盖。 */
+export function createFakeUpdateBridge(
+  check: () => Promise<UpdateCheckResult> = async () => ({
+    status: 'up-to-date',
+    currentVersion: '0.1.0'
+  })
+): AppBridge['update'] {
+  return { check }
 }
 
 /** 默认导入器什么都不做（等同用户取消），测试需要时可覆盖。 */
@@ -59,6 +70,7 @@ export function createFakeAnnotationTransfer(
 export function createFakeBridge(versions: RuntimeVersions = DEFAULT_VERSIONS): AppBridge {
   return {
     versions: Promise.resolve(versions),
+    update: createFakeUpdateBridge(),
     books: new InMemoryBookRepository(),
     library: createFakeImporter(),
     cover: createFakeCoverReader(),

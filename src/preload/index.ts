@@ -6,7 +6,8 @@ import {
   BOOK_CHANNELS,
   LIBRARY_CHANNELS,
   RUNTIME_CHANNELS,
-  SETTINGS_CHANNELS
+  SETTINGS_CHANNELS,
+  UPDATE_CHANNELS
 } from '@shared/ipc'
 
 const api: AppBridge = {
@@ -14,6 +15,9 @@ const api: AppBridge = {
   // contextBridge），所以这里走一次 IPC。`process.versions.*` 在 preload 里可用，
   // 但为了「一次调用拿全」还是并到主进程一起返回。
   versions: ipcRenderer.invoke(RUNTIME_CHANNELS.versions),
+  update: {
+    check: () => ipcRenderer.invoke(UPDATE_CHANNELS.check)
+  },
   books: {
     list: () => ipcRenderer.invoke(BOOK_CHANNELS.list),
     get: (id) => ipcRenderer.invoke(BOOK_CHANNELS.get, id),
