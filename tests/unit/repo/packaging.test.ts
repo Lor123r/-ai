@@ -28,6 +28,15 @@ interface PackageJson {
     directories: { output: string }
     files: string[]
     win: { target: string[] }
+    nsis: {
+      oneClick: boolean
+      perMachine: boolean
+      allowToChangeInstallationDirectory: boolean
+      deleteAppDataOnUninstall: boolean
+      createDesktopShortcut: boolean
+      createStartMenuShortcut: boolean
+      shortcutName: string
+    }
   }
 }
 
@@ -60,8 +69,8 @@ describe('打包入口', () => {
 })
 
 describe('打包目标', () => {
-  it('只打 Windows 的 dir 与 zip', () => {
-    expect(pkg.build.win.target).toEqual(['dir', 'zip'])
+  it('只打 Windows 的 dir、zip 与 nsis', () => {
+    expect(pkg.build.win.target).toEqual(['dir', 'zip', 'nsis'])
   })
 
   it('不用 electron-builder 自带的 portable target', () => {
@@ -79,10 +88,42 @@ describe('打包目标', () => {
   })
 })
 
+describe('NSIS 安装器', () => {
+  it('走向导而不是一键安装', () => {
+    // 一键安装会把应用直接塞进默认目录，用户连装到哪都看不到
+    expect(pkg.build.nsis.oneClick).toBe(false)
+  })
+
+  it('装到用户目录，免管理员权限', () => {
+    // perMachine: true 会要求 UAC 提权并装进 Program Files
+    expect(pkg.build.nsis.perMachine).toBe(false)
+  })
+
+  it('允许用户改安装目录', () => {
+    expect(pkg.build.nsis.allowToChangeInstallationDirectory).toBe(true)
+  })
+
+  it('卸载时保留用户数据', () => {
+    // 书库与批注是用户资产，卸载应用不该顺手删掉
+    expect(pkg.build.nsis.deleteAppDataOnUninstall).toBe(false)
+  })
+
+  it('创建桌面与开始菜单快捷方式', () => {
+    expect(pkg.build.nsis.createDesktopShortcut).toBe(true)
+    expect(pkg.build.nsis.createStartMenuShortcut).toBe(true)
+    expect(pkg.build.nsis.shortcutName).toBe('电纸书阅读器')
+  })
+})
+
 describe('打包脚本', () => {
-  it('两个打包脚本都先 build', () => {
+  it('三个打包脚本都先 build', () => {
     expect(pkg.scripts['package:dir']).toContain('npm run build')
     expect(pkg.scripts['package:zip']).toContain('npm run build')
+    expect(pkg.scripts['package:installer']).toContain('npm run build')
+  })
+
+  it('安装器脚本打的是 nsis target', () => {
+    expect(pkg.scripts['package:installer']).toContain('nsis')
   })
 
   it('打包脚本不进 verify', () => {

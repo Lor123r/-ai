@@ -17,6 +17,7 @@
     "test:e2e": "npm run build && playwright test",
     "package:dir": "npm run build && electron-builder --win --dir",
     "package:zip": "npm run build && electron-builder --win zip",
+    "package:installer": "npm run build && electron-builder --win nsis",
     "verify": "npm run typecheck && npm run test && npm run test:e2e"
   },
   "dependencies": {
@@ -61,8 +62,18 @@
     "win": {
       "target": [
         "dir",
-        "zip"
+        "zip",
+        "nsis"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "电纸书阅读器"
     }
   }
 }
