@@ -14,8 +14,7 @@
 - [5. 架构总览](#5-架构总览)
 - [6. 核心数据模型](#6-核心数据模型)
 - [7. 关键流程](#7-关键流程)
-- [8. IPC 契约](#8-ipc-契约)
-- [9. 存储布局与容错策略](#9-存储布局与容错策略)
+- [8. IPC 契约](#8-ipc-契约)- [9. 存储布局与容错策略](#9-存储布局与容错策略)
 - [10. epub.js 集成要点](#10-epubjs-集成要点)
 - [11. 测试体系](#11-测试体系)
 - [12. 开发规范](#12-开发规范)
@@ -32,8 +31,8 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 迭代轮次 | 41 |
-| 单元/组件测试 | 73 个文件 / **1075** 个用例，全通过 |
+| 迭代轮次 | 42 |
+| 单元/组件测试 | 76 个文件 / **1108** 个用例，全通过 |
 | 端到端测试 | **20** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
 | 一条命令验证 | `npm run verify` |
@@ -68,9 +67,27 @@ npm install --registry=https://registry.npmmirror.com
 | `npm run typecheck` | 类型检查（等于 `typecheck:node` + `typecheck:web`） |
 | `npm run test` | 跑全部单元/组件测试（watch 模式用 `npm run test:watch`） |
 | `npm run test:e2e` | 先 `build` 再跑 Playwright 端到端测试 |
+| `npm run package:dir` | 先 `build` 再打成免安装目录 `release/win-unpacked/` |
+| `npm run package:zip` | 先 `build` 再打成压缩包 `release/ebook-reader-<版本>-x64.zip` |
 | `npm run verify` | **交付门禁**：`typecheck` → `test` → `test:e2e` |
 
 > 交付前一律以 `npm run verify` 为准。它失败就等于这次改动没做完。
+> 两个 `package:*` 命令**不在** `verify` 里：它们要下载 Electron 二进制、耗时数分钟，
+> 且产物正确性靠人工复核（见第 7.12 章），不适合放进每次交付的门禁。
+
+### 打包
+
+```powershell
+# 国内网络建议走镜像，否则 electron-builder 拉二进制会 TLS 失败
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
+
+npm run package:dir   # 免安装目录，适合本机验证
+npm run package:zip   # 压缩包，适合拷给别人
+```
+
+产物落在 `release/`（已 gitignore）。`win-unpacked/` 里直接双击 `电纸书阅读器.exe` 即可运行，
+不需要装 Node，也不需要装 Electron。
 
 ---
 
@@ -91,10 +108,11 @@ npm install --registry=https://registry.npmmirror.com
 | 书签与划线 | 头部一键加/删书签，书签在正文右侧页边显示竖丝带标记；选中正文弹出浮条，四个色块任选一种划线颜色，选区上已有划线时可原地改色或删除；注解抽屉列出全书书签与划线（带配色名）并支持逐条删除 |
 | 注解导出导入 | 注解抽屉里把这本书的书签与划线导出成一份 JSON 文件（默认文件名取书名清洗后的结果），或把另一份这样的文件并进来：一律并到当前这本书、按 id 去重且不覆盖已有、超出容量则截断，结果只说「新增/跳过/丢弃/未导入各几条」，不显示任何路径 |
 | 容错 | 书库/注解文件损坏时备份并从空数据启动；设置损坏时静默回落默认值 |
+| 打包分发 | `electron-builder` 打 Windows 免安装目录与 zip；exe 同级放一个 `portable.txt` 即切到便携模式，数据落在 `<exe 目录>/data`，整个目录拷走就是完整迁移 |
 
 ### 明确不做（留给后续版本）
 
-全文搜索、批注、多标签页、云同步、打包分发。TXT 侧不做注解（理由见第 7.9 章）。
+全文搜索、批注、多标签页、云同步。TXT 侧不做注解（理由见第 7.9 章）。
 
 ---
 
@@ -588,6 +606,27 @@ EPUB 把目录写成 NCX / nav 文档，TXT 什么都没有——这两件事都
 
 ---
 
+### 7.12 打包与便携模式
+
+开发态跑的是 `node_modules/electron/dist/electron.exe`，用户拿到的是 `release/win-unpacked/电纸书阅读器.exe`。两者最大的差别是**数据目录**：开发态与安装态都写 `%APPDATA%\ebook-reader`，而便携版应该把数据留在 exe 旁边，插上 U 盘就能带走。
+
+1. **便携模式的判据是「exe 同级有 `portable.txt`」，不是「exe 同级可写」。** 可写性探测要真的写一个文件再删掉：在只读介质上会失败，在 `Program Files` 下会失败，在 U 盘上会成功——但用户把应用装在 U 盘上并不等于他想让数据跟着 U 盘走。一个显式的标记文件是**用户意图**，可写性是**环境事实**，两者不等价。判据写在 [portable.ts](src/main/storage/portable.ts) 的 `hasPortableMarker`。
+2. **数据落在 `<exe 目录>/data` 而不是 exe 同级。** 后者会把 `library.json`、`annotations.json`、`books/`、`covers/` 和 exe、`resources/`、`locales/` 混在一起，用户想「把数据拷走」时无从下手。拷走 `data/` 就等于拷走全部用户数据。
+3. **优先级：环境变量 > 便携模式 > Electron 默认。** 环境变量排最前，因为它是**测试基础设施**：E2E 必须能无视仓库里有没有 `portable.txt` 而钉死数据目录。反过来会让 E2E 依赖工作区状态。空字符串不算覆盖，否则 `EBOOK_READER_USER_DATA=` 会静默把数据写到当前工作目录。
+4. **`mkdir` 失败回落默认目录 + 留痕，不抛错。** 启动链上没有人接得住异常（见 [startup.ts](src/main/storage/startup.ts) 的注释），一次 `mkdir` 失败就意味着窗口永远不出现。但**不能静默**：用户以为数据在 U 盘上、实际写进了 `%APPDATA%`，拔了 U 盘换台机器就会以为「书全没了」。所以走 `probe.warn` 留一条日志。
+5. **开发态不启用便携模式。** `process.execPath` 指向 `node_modules/electron/dist/electron.exe`，在那里建 `data/` 只会污染依赖目录。判据是 `app.isPackaged`。
+6. **不用 electron-builder 自带的 `portable` target。** 它把应用解压到临时目录再跑，`process.execPath` 指向临时目录，**与我们的便携模式判据直接冲突**。用 `dir` + 用户自己放 `portable.txt` 更可控。
+7. **只做 Windows 免安装版（`dir` + `zip`），不做 NSIS 安装器。** 安装器要处理「装到哪」「要不要开机自启」「卸载时留不留数据」，每一个都是独立的产品决策，而 MVP 阶段验证「打包产物能跑」用 dir/zip 就够了。
+8. **不做代码签名与自动更新。** 签名需要真实证书与密码，仓库里放不了；自动更新需要发布服务器 + 签名，且会引入一个常驻网络请求。
+9. **`files` 只收 `out/**/*` 与 `package.json`。** 默认规则会把整个仓库塞进 asar，`src/`、`tests/`、`e2e/` 全进去。这条由 [packaging.test.ts](tests/unit/repo/packaging.test.ts) 钉住。
+10. **`RuntimeVersions` 加 `app` 字段，标签去掉 Chromium 与 Node。** 用户报 bug 时关心的是「哪个版本的应用」，Chromium 版本是开发者信息且随 Electron 版本唯一确定。用 `app.getVersion()` 而不是 `process.env.npm_package_version`——打包后没有 npm 环境，这个变量是空的。
+11. **⭐ 应用版本必须走 IPC 拿，不能在 preload 里读 `app`。** `app` 是**主进程专属**模块，preload 跑在渲染进程里，`electron.app` 是 `undefined`。`app.getVersion()` 会在 preload 加载时直接抛错，把整个 `contextBridge.exposeInMainWorld` 一起带走——表现是 `window.api` 变成 `undefined`，界面上所有功能静默失效，而主进程侧看不到任何报错。所以新增了 `runtime:versions` 频道（[runtimeIpc.ts](src/main/ipc/runtimeIpc.ts)），`AppBridge.versions` 相应改成 `Promise<RuntimeVersions>`，渲染层用 [useRuntimeVersions.ts](src/renderer/src/platform/useRuntimeVersions.ts) 在 effect 里取。`process.versions.*` 在 preload 里本来可用，但为了「一次调用拿全」还是并到主进程一起返回。
+12. **⭐ 探针的默认值必须来自运行时，且必须真机验证一次。** 这一轮踩的坑：`defaultProbe()` 里写死了 `isPackaged: false`，从来没读 `app.isPackaged`，于是 `resolvePortableDataDir` 的第一道闸在生产环境永远命中，便携模式**完全没生效**。而 16 条单测全绿——因为测试自己注入探针，**绕过了这个写死的默认值**。修法是把 `isPackaged` 提升成必填参数（`defaultProbe(isPackaged)`、`applyUserDataOverride(env, isPackaged, setPath, probe?)`），漏传直接编译报错。教训：**凡是「默认值来自运行时环境」的探针，都必须有一次真机验证，否则单测的绿灯是假的。**
+
+> **打包后的 Electron 应用看不到 `console.log`。** `Start-Process -RedirectStandardError` 只能拿到 Chromium 的缓存报错（`Unable to move the cache: 拒绝访问 (0x5)`），主进程的 `console.warn` / `console.info` 不会出现在那里。定位这类问题的正确做法是在 `src/main/index.ts` 顶部临时 `writeFileSync` 一个 JSON 到固定路径，把 `app.isPackaged`、`process.execPath`、标记文件探测结果、`mkdir` 的异常与 `code`、`app.getPath('userData')` 全写进去，跑一次读文件，定位后删掉。**不要反复启动 exe 盲试**——残留进程会占住 `d3dcompiler_47.dll`，导致后续 `electron-builder` 打包报 `EPERM: operation not permitted, unlink`。
+
+---
+
 ## 8. IPC 契约
 
 频道的字符串**只在** [src/shared/ipc.ts](src/shared/ipc.ts) 里定义一次，主进程与 preload 都从这里引用，避免两边各写一份字符串写错。
@@ -775,7 +814,7 @@ return ePub(copy.buffer)
 | 渲染进程组件 | Testing Library + jsdom，通过 Provider 注入假桥 |
 | 整机行为 | Playwright + 真实 Electron 进程 |
 
-### 单元测试地图（73 文件 / 1075 用例）
+### 单元测试地图（76 文件 / 1108 用例）
 
 | 分组 | 文件数 | 用例数 | 关注点 |
 | --- | --- | --- | --- |
@@ -783,13 +822,13 @@ return ePub(copy.buffer)
 | `core/epub` | 3 | 44 | OPF / container 解析、封面抽取、路径越界拒绝 |
 | `core/adapters` | 9 | 170 | 契约测试、JSON 快照分片容错、串行化、四条写操作落盘失败时回滚内存、注解存档的宽容解析与并发写、`dropped` 的合并语义、交换格式的信封硬校验与条目投影复用、批量写入的容量边界与「一批只写一次盘」 |
 | `core/services` | 2 | 36 | 导入编排：去重、坏文件清理、书名兜底、写入书库失败时回收刚复制进来的正文与封面；注解导入的三步规划（重定向 → 按 id 去重 → 按容量截断）与报告计数 |
-| `main` | 11 | 185 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界 |
+| `main` | 13 | 206 | IPC 入参校验、书库与注解的恢复流程、启动期兜底降级（含「写入即失败」的注解仓储）、删书时「先删书、后删注解、最后回收文件」的顺序与各步失败的降级、收尾失败按性质分级留痕、主操作失败时磁盘一个字节不动、封面回收与书籍回收互不牵连、文件落盘与越界及归属防护、设置存储、交换文件的字节上限与「不许写进应用数据目录」的边界、便携模式的判据与优先级（含未打包不启用、标记文件是目录不算数、`mkdir` 失败回落并留痕）、运行时版本频道的注册与透传 |
 | `renderer/data` | 6 | 19 | 有无 IPC 桥时的实现选择、注解适配器的 `removeByBook` 与 `saveMany` 拒绝、桥缺失或没有交换能力时工厂回落为 `null` |
 | `renderer/reader` | 20 | 324 | 节流器、外观应用、目录读取、设置 hook、`EpubReaderView` 交互（含改字号重排后书签按钮仍按「当前页」判定）、TXT 正文字节解码与「编码可能不对」的判据、分栏分页算术、TXT 阅读器交互（含目录生成后按块内偏移跳转）与续读反解、共用外壳 `ReaderChrome`、注解 id 的三档降级、划线图层差分、书签标记图层差分、注解数据 hook、导出导入的调用与结果文案、选区浮条与注解抽屉 |
 | `renderer/shelf` | 6 | 44 | 书架渲染、导入结果文案、封面占位、删除、排序与筛选工具条（受控、只回调自己那一项）、筛选后的计数与空态 |
-| 其他 | 2 | 7 | `App` 路由切换、`runtime` 版本标签 |
+| 其他 | 2 | 8 | `App` 路由切换、`runtime` 版本标签（含「版本信息是异步的」这条回归） |
 | `tests/support` | 1 | 3 | fixture 确定性：zip 时间戳固定、同输入同字节 |
-| `tests/unit/repo` | 3 | 24 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力；注解与书库存储层的源码级隔离；`tools/make-fixtures.ps1` 的 BOM 与语法、以及它生成的复核样本（覆盖 R21–R29、字节数与实际文件对账、块数、行尾归一化、三本长文字节互异） |
+| `tests/unit/repo` | 4 | 35 | `.claude/agents` 子 Agent 定义：命名、frontmatter 完整、在 `AGENTS.md` 里被引用、无命令执行能力；注解与书库存储层的源码级隔离；`tools/make-fixtures.ps1` 的 BOM 与语法、以及它生成的复核样本（覆盖 R21–R29、字节数与实际文件对账、块数、行尾归一化、三本长文字节互异）；打包配置（`main` 指向 `out/main/index.js`、`files` 只收 `out/**/*` 与 `package.json`、产物目录已 gitignore、只打 `dir` 与 `zip`、不用 `portable` target、`artifactName` 与 `appId` 是 ASCII、打包脚本先 build 且不进 verify、electron-builder 是 devDependency） |
 
 `tests/unit/reader/EpubReaderView.test.tsx`（55 例）是最重的一个文件：用一个 `fakeEpub` 把 epub.js 的全部对外行为替换掉，从而在不启动 Electron 的情况下断言「目录抽屉开关」「设置变化后 override 被调用」「pageMargin 变化后 resize 被调用」「书签 toggle」「划线走 `selected` → 注入图层」「书签走 `mark` → 注入页边标记」「翻页收起浮条」这类交互。
 
@@ -982,6 +1021,7 @@ test:e2e = build && playwright test
 | 39 | `b0305b2` | 功能 | TXT 目录的标题模式扩充：`textToc.ts` 的标题正则从字面量改成按 `CN_NUM` / `ROMAN_NUM` / `CN_UNIT` 三个常量拼装，后缀补上「话」「幕」与「终篇」，序号支持罗马数字（`第Ⅰ章`）与后置写法（`卷五`、`章三`），另加 `Chapter N` / `Part N` 这类英文标题；新增 `NUMBERED_LINE` 单独认纯编号行（`01. 起点`、`2、转折`、`三：归途`、`4 终局`），并刻意要求序号后必须跟分隔符且标题正文非空，免得把页码、年份、光秃秃的 `01` 列进目录；两条规则各扫一遍再按块内偏移合并去重，同一行被同时认到只出一条 |
 | 40 | `c79237f` | 功能 | 书签跨重排的位置修正：`bookmarkAt` 的判据从「cfi 精确相等」改成「同一章 + 书签百分比落在当前页区间内」，`ReaderPosition` 补上 `chapterIndex` / `spineCount` / `page` / `totalPages`，新增 `isOnCurrentPage` 与 `currentPageRange` 两个纯函数；改字号后 `relocated` 报出的 `start.cfi` 会变，旧判据必然失效、再点一下就在旧书签旁边加出第二条，新判据把这条必然缺陷降成「跨页边界时偶发」；刻意不给 `BookmarkAnnotation` 加 `page` 字段（页号不是稳定锚点，且要连带改快照版本兼容与导入校验），因此没有新 IPC 频道 |
 | 41 | `b56acbe` | 功能 | 书架的排序与筛选：新增 `core/domain/shelfView.ts`（`ShelfSort` 五种、`ShelfFilter` 六种、`normalizeShelfView`、`compareShelfEntries`、`matchesShelfFilter`、`applyShelfView`），`ShelfEntry` 从渲染层 hook 搬进 core 再由 `useBooks.ts` 再导出；新增 `useShelfView` hook 与 `ShelfToolbar` 组件（两个原生 `<select>`），`Bookshelf` 接线后计数在筛选时显示「筛出 / 总数」、筛空时给专门的空态且保留工具条；中文书名走 `Intl.Collator('zh-Hans-CN')` 拿拼音序，无作者排最后，所有排序以 id 兜底；`reading` / `unread` / `finished` 三者互斥且穷尽全部；刻意不落盘（视图偏好不是内容，落盘要新增存储或污染语义是「阅读设置」的 `settings.json`），因此没有新 IPC、没有新存储 |
+| 42 | `a2dfa05` | 功能 | 打包分发与便携模式：接入 `electron-builder`（`package:dir` / `package:zip` 两个脚本，`files` 只收 `out/**/*` 与 `package.json`，产物落 `release/` 并 gitignore，只打 Windows 免安装目录与 zip，不做 NSIS 安装器、不做签名与自动更新）；新增 `src/main/storage/portable.ts`，判据是「exe 同级有 `portable.txt`」而不是「exe 同级可写」，数据落 `<exe 目录>/data`，优先级为环境变量 > 便携模式 > Electron 默认，`mkdir` 失败回落默认目录并留痕而不抛错，开发态（`app.isPackaged` 为假）不启用；`RuntimeVersions` 加 `app` 字段、版本标签改成 `v<应用版本> · Electron <版本>`（去掉 Chromium 与 Node），应用版本改走新增的 `runtime:versions` 频道（`app` 是主进程专属模块，preload 里读它会抛错并带走整个 contextBridge，表现是 `window.api` 变 undefined）；新增 `portable.test.ts`（17 条）、`runtimeIpc.test.ts`（3 条）与 `packaging.test.ts`（11 条） |
 
 ### 过程中沉淀下来的经验
 
@@ -998,6 +1038,9 @@ test:e2e = build && playwright test
 - **「状态没变」不等于「不用重算」。** 跳到当前所在的块时，块序号、页码、栏宽一个都没动，量尺寸的 `useLayoutEffect` 依赖数组全部相等，于是不重跑、落点永远算不出来。加一个自增的计数器当依赖，专门用来把 effect 叫醒。
 - **给人看的样本更需要守卫。** 测试夹具出问题会被断言立刻拦下，人工复核样本出问题只会变成一串没人能解释的现象 —— 而复核的人第一反应是怀疑产品代码。所以这类样本也得有测试：真跑一遍生成脚本，再拿产品里同一份算法（`splitTextIntoBlocks`）去复核产物。顺带一条，断言不能读脚本自己写的清单，那是让它给自己判卷。
 - **文件名本身也是接口。** 样本按生成顺序起名，一周后就会出现「`R22-纯空白` 实际服务 R23」这种对不上的情况，而按文件名找样本是复核的第一步。名字里带的编号必须是它真的服务的那一条，一个样本服务多条就全写进去。
+- **注入式设计会让「默认值写错」逃过单测。** 探针能被注入，单测就能全绿；可一旦默认值本身写错（`isPackaged` 写死成 `false`），生产环境走的就是那条从没被测过的分支。凡是「默认值来自运行时环境」的探针，都必须有一次真机验证，否则单测的绿灯是假的。修法是把这类参数提升成必填，漏传直接编译报错。
+- **preload 里没有 `app`。** `app` 是主进程专属模块，preload 跑在渲染进程里，`electron.app` 是 `undefined`。在 preload 顶层读它会在加载时抛错，把整个 `contextBridge.exposeInMainWorld` 一起带走 —— 表现是 `window.api` 变成 `undefined`、界面上所有功能静默失效，而主进程侧看不到任何报错。这类「静默全灭」的失败模式，只有端到端测试能第一时间抓到。
+- **改共享契约要顺手搜一遍断言。** 改了版本标签的文案却只跑单测，端到端里那条按旧文案匹配的断言就会红。契约（`RuntimeVersions`、标签文案、IPC 频道）一改，`src/` 与 `e2e/` 都要搜一遍。
 
 ---
 
@@ -1012,7 +1055,8 @@ test:e2e = build && playwright test
 - 目录跳转只到章首（`display(href)` 的行为），不做段内精确定位（TXT 例外：目录项带块内偏移，能落到块中段，但仍不到行）。
 - 进度按「章节 + 页码」估算，与按字符数统计的真实进度略有偏差（已读阈值取 99.5%）。
 - 单窗口，无标签页。
-- 未做打包分发（`electron-builder` 等）。
+- 打包只做 Windows 免安装目录与 zip（`npm run package:dir` / `package:zip`），不做 NSIS 安装器、不做代码签名、不做自动更新。未签名的 exe 首次运行会被 SmartScreen 拦一下。
+- 便携模式（exe 同级放 `portable.txt`）**没有端到端覆盖**：它的判据依赖 `app.isPackaged`，而 E2E 跑的是未打包的 `out/main/index.js`，所以这条路径只有单测 + 人工复核（见第 7.12 章第 11 条）。
 - 封面以 data URL 内联，大封面会略微增加内存占用（换来的是不必手工释放 object URL）。
 - 划线的进度百分比沿用「最近一次 `relocated` 的位置」做近似，不是划线本身在书里的位置。同章内翻页不影响，跨章标出来再回头翻页时会略有偏差。
 - 书签的「当前页」判据是「同一章 + 百分比落在当前页区间内」，改字号重排后**跨页边界**时仍可能加出第二条相邻书签（改字号后 100% 加出第二条的必然缺陷已经修掉，见第 7.7 章）。
@@ -1025,4 +1069,4 @@ test:e2e = build && playwright test
 2. **书签与划线的细节打磨** —— 主链路已经通了：领域模型（[annotation.ts](src/core/domain/annotation.ts)，见第 6 章）、存档层（[annotations.ts](src/main/storage/annotations.ts)，见第 9 章）、`annotations:*` IPC 与渲染层适配器，以及界面（[EpubReaderView.tsx](src/renderer/src/reader/EpubReaderView.tsx) 的接线 + [SelectionToolbar.tsx](src/renderer/src/reader/SelectionToolbar.tsx) / [AnnotationDrawer.tsx](src/renderer/src/reader/AnnotationDrawer.tsx)）；四种划线配色也已接到界面上（见第 7.7 章）。跨分栏重排后的位置修正已经落地：`bookmarkAt` 的判据从 cfi 精确相等改成「同一章 + 百分比落在当前页区间内」，改字号后不会再必然加出第二条相邻书签（跨页边界仍可能，见第 14 章当前限制）。刻意**不复用 `ReadingLocator`，也不把注解塞进 `library.json`**：locator 是每本书一个的单值，注解是集合，混在一起会让每次翻页都重写全部划线。代价是注解与书库是两把独立的锁、跨文件没有事务，所以「删书 + 删注解」必须在主进程同一个 handler 里顺序完成。
 3. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。
 4. **书库组织** —— 排序与筛选已经落地（见第 7.11 章）：五种排序、六种筛选，纯前端重排与过滤，不落盘。剩下的两块是**分组**（按作者/格式分节，与筛选高度重叠，收益有限）与**标签**（用户自定义标签，需要新存储 + 新 IPC + 打标签入口，是独立一轮的量）。
-5. **打包分发** —— 代码签名、自动更新、便携模式（`EBOOK_READER_USER_DATA` 已经为便携模式留好了口子）。
+5. **打包分发** —— 免安装目录与 zip 已经落地（见第 7.12 章）：`electron-builder` 打 Windows `dir` + `zip`，exe 同级放 `portable.txt` 即切到便携模式。剩下的三块是**代码签名**（需要真实证书与密码，仓库里放不了）、**自动更新**（需要发布服务器 + 签名，且会引入一个常驻网络请求）与 **NSIS 安装器**（要处理「装到哪」「要不要开机自启」「卸载时留不留数据」，每一个都是独立的产品决策）。
