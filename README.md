@@ -9,6 +9,12 @@
 
 - [1. 项目定位与当前状态](#1-项目定位与当前状态)
 - [2. 快速开始](#2-快速开始)
+  - [环境要求](#环境要求)
+  - [安装](#安装)
+  - [命令](#命令)
+  - [检查更新](#检查更新)
+  - [打包](#打包)
+  - [发版](#发版)
 - [3. MVP 功能范围](#3-mvp-功能范围)
 - [4. 技术选型与理由](#4-技术选型与理由)
 - [5. 架构总览](#5-架构总览)
@@ -31,7 +37,7 @@
 
 | 指标 | 数值 |
 | --- | --- |
-| 迭代轮次 | 45 |
+| 迭代轮次 | 46 |
 | 单元/组件测试 | 80 个文件 / **1175** 个用例，全通过 |
 | 端到端测试 | **20** 条 Playwright + Electron 用例，全通过 |
 | 类型检查 | `tsc --noEmit` 双工程（node + web）零错误 |
@@ -111,6 +117,60 @@ npm run package:installer # NSIS 安装器，适合正式分发
 
 安装器装到 `%LOCALAPPDATA%\Programs\电纸书阅读器`，**不需要管理员权限**；卸载时保留用户数据
 （书库与批注在 `%APPDATA%\电纸书阅读器`）。详见第 7.12 章。
+
+### 发版
+
+发布走本仓库的 GitHub Release。`build.publish` 已经配好（`github` provider，见第 7.13 章），
+**发版时不需要改任何代码**，只有三步。
+
+**第一步：升版本号。**
+
+改 `package.json` 的 `version`。**这一步不能省**——应用靠版本号判断有没有新版本，
+原地覆盖同一个版本号的附件，已装用户不会收到更新（`compareVersions` 判定为「已是最新」），
+只能手动重下。
+
+**第二步：打包。**
+
+```powershell
+$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
+
+npm run verify            # 门禁，红了就别往下走
+npm run package:installer
+```
+
+**第三步：打 tag、建 Release、传三个附件。**
+
+```powershell
+git tag -a v0.1.1 -m "v0.1.1"
+git -c http.sslBackend=schannel push origin master
+git -c http.sslBackend=schannel push origin v0.1.1
+```
+
+然后在 GitHub 上建 Release（tag 选刚推的那个），把 `release/` 里的**三个文件**都传上去：
+
+| 文件 | 作用 |
+| --- | --- |
+| `ebook-reader-<版本>-x64.exe` | 安装器本体 |
+| `ebook-reader-<版本>-x64.exe.blockmap` | 增量下载用 |
+| `latest.yml` | **检查更新的入口**，缺了它应用永远看不到新版本 |
+
+**三个都要传。** 只传 `.exe` 的话，用户能手动下载，但应用内的更新提示不会出现。
+
+**验证发版成功。**
+
+```powershell
+curl.exe -sSL --ssl-no-revoke "https://github.com/Lor123r/-ai/releases/latest/download/latest.yml"
+```
+
+返回的 `version:` 应该是刚发的版本号。这条命令走的是**匿名请求**，与应用的行为一致——
+如果它 404，应用也拿不到。
+
+> **`latest.yml` 是白捡的。** electron-builder 的 `nsis` target 本来就会生成它和 `.blockmap`，
+> 不需要额外做。缺的只有「把文件传上去」这一步。
+
+> **别把仓库转回私有。** 私有仓库的 Release 附件需要认证，而应用发的是匿名请求，
+> 检查更新会立刻失效。这不是偏好，是功能前提。
 
 ---
 
@@ -1074,7 +1134,8 @@ test:e2e = build && playwright test
 | 42 | `a2dfa05` | 功能 | 打包分发与便携模式：接入 `electron-builder`（`package:dir` / `package:zip` 两个脚本，`files` 只收 `out/**/*` 与 `package.json`，产物落 `release/` 并 gitignore，只打 Windows 免安装目录与 zip，不做 NSIS 安装器、不做签名与自动更新）；新增 `src/main/storage/portable.ts`，判据是「exe 同级有 `portable.txt`」而不是「exe 同级可写」，数据落 `<exe 目录>/data`，优先级为环境变量 > 便携模式 > Electron 默认，`mkdir` 失败回落默认目录并留痕而不抛错，开发态（`app.isPackaged` 为假）不启用；`RuntimeVersions` 加 `app` 字段、版本标签改成 `v<应用版本> · Electron <版本>`（去掉 Chromium 与 Node），应用版本改走新增的 `runtime:versions` 频道（`app` 是主进程专属模块，preload 里读它会抛错并带走整个 contextBridge，表现是 `window.api` 变 undefined）；新增 `portable.test.ts`（17 条）、`runtimeIpc.test.ts`（3 条）与 `packaging.test.ts`（11 条） |
 | 43 | `b9722b5` | 功能 | NSIS 安装器：`build.win.target` 加 `nsis`，新增 `build.nsis` 配置块（`oneClick: false` 走向导、`perMachine: false` 装 `%LOCALAPPDATA%` 免管理员权限、`allowToChangeInstallationDirectory: true` 允许改安装目录、`deleteAppDataOnUninstall: false` 卸载保留用户数据、建桌面与开始菜单快捷方式、`shortcutName` 用中文产品名），新增 `package:installer` 脚本；不做开机自启（`runAfterFinish` 保留默认，与开机自启无关），仍不做代码签名与自动更新；`packaging.test.ts` 从 11 条扩到 17 条 |
 | 44 | `d94d490` | 功能 | 检查更新：新增 `core/domain/update.ts`（`parseVersion` / `compareVersions` / `evaluateUpdate` / `describeUpdate`，版本比较刻意放 core 因为 `1.10.0` 与 `1.9.0` 的字典序陷阱最容易写错）、`src/main/update/updateChecker.ts`（读 `latest.yml` 抠版本号，四档失败 `not-packaged` / `no-feed` / `network` / `malformed`，**从不抛错**）、`update:check` 频道（缓存 Promise 让并发调用共用同一次请求）与 `useUpdateNotice` hook；**只检查、只提示，不下载也不安装** —— 未签名的更新包在 Windows 上会被 `electron-updater` 拒绝，所以 `UpdateBridge` 只有一个 `check()`，刻意不摆 `download()` / `install()` 空壳；更新源地址写在 `package.json` 的 `build.publish` 里（`generic` provider），打包时由 electron-builder 写进 `resources/app-update.yml`，运行时读出来再拼上 `latest.yml`，读不到就是「这个构建不检查更新」（应用不去猜地址，猜错的表现是静默地永远检查不到更新）；新增 `update.test.ts`（19 条）、`updateChecker.test.ts`（28 条）、`updateIpc.test.ts`（4 条）与 `BookshelfUpdate.test.tsx`（6 条） |
-| 45 | `—` | 发布 | 发布准备：`build.publish` 从 `generic` 占位地址（`https://example.com/ebook-reader/releases`）换成 `github` provider（`owner: Lor123r`、`repo: -ai`），让 `latest.yml` 与安装包待在同一个 Release 里、地址由 electron-builder 自己算；仓库转为 public —— **检查更新只在公开仓库上成立**，私有仓库的 Release 附件需要认证而应用发的是匿名请求；`packaging.test.ts` 从 20 条扩到 21 条（新增「不残留 `example.com` 占位地址」） |
+| 45 | `ae3023d` | 发布 | 发布准备：`build.publish` 从 `generic` 占位地址（`https://example.com/ebook-reader/releases`）换成 `github` provider（`owner: Lor123r`、`repo: -ai`），让 `latest.yml` 与安装包待在同一个 Release 里、地址由 electron-builder 自己算；仓库转为 public —— **检查更新只在公开仓库上成立**，私有仓库的 Release 附件需要认证而应用发的是匿名请求；`packaging.test.ts` 从 20 条扩到 21 条（新增「不残留 `example.com` 占位地址」） |
+| 46 | `—` | 文档 | 补发版流程：第 2 章新增「发版」小节（三步：升版本号 → `npm run verify` + `package:installer` → 打 tag 建 Release 传三个附件），并写明「三个附件都要传，缺 `latest.yml` 应用内更新提示不会出现」与「别把仓库转回私有」；第 14 章把「发布前必须补的一件事」改成「唯一的遗留项」，并说明换图标不影响使用与更新、但要同时升版本号 |
 
 ### 过程中沉淀下来的经验
 
@@ -1127,12 +1188,12 @@ test:e2e = build && playwright test
 1. **TXT 的目录质量** —— 生成逻辑已落地（见第 7.10 章）：靠「第 X 章」这类行文规律现算，认不出标题就退化成按块首列。标题模式已扩充到卷/话/回/幕、罗马数字、后置序号、英文 `Chapter N` 与纯编号行。退化路径仍然只是能用，谈不上好用，下一步可以让用户点一下「把这一行设为章节」手工补目录。
 2. **书签与划线的细节打磨** —— 主链路已通（见第 7.7 章）：领域模型、存档层、`annotations:*` IPC、渲染层适配器与界面，四种划线配色都已接上。跨分栏重排后的位置修正也已落地（`bookmarkAt` 判据改成「同一章 + 百分比落在当前页区间内」）。剩下的只有跨页边界那点偶发（见「当前限制」）。
 3. **书库组织** —— 排序与筛选已落地（见第 7.11 章）：五种排序、六种筛选，纯前端重排与过滤，不落盘。剩下的两块是**分组**（按作者/格式分节，与筛选高度重叠，收益有限）与**标签**（用户自定义标签，需要新存储 + 新 IPC + 打标签入口，是独立一轮的量）。
-4. **打包分发** —— 免安装目录、zip 与 NSIS 安装器都已落地（见第 7.12 章），检查更新也已落地（见第 7.13 章），发布走本仓库的 GitHub Release。剩下的两块是**代码签名**（需要真实证书与密码，仓库里放不了）与**自动下载安装**（依赖签名）。
+4. **打包分发** —— 免安装目录、zip 与 NSIS 安装器都已落地（见第 7.12 章），检查更新也已落地（见第 7.13 章），发布走本仓库的 GitHub Release（发版流程见第 2 章「发版」）。剩下的两块是**代码签名**（需要真实证书与密码，仓库里放不了）与**自动下载安装**（依赖签名）。
 
 **完全没做**
 
 5. **全文搜索** —— 需要预建索引，是第一个真正需要 `locations.generate()` 级别代价的功能。也是原五个方向里唯一没动的一个。
 
-**发布前必须补的一件事**（不是功能，是「让它真的能用」）
+**唯一的遗留项**（不是功能，是外观）
 
-6. **换掉默认图标。** 打包日志里一直有 `default Electron icon is used reason=application icon is not set`，产物用的是 Electron 自带的图标。
+6. **换掉默认图标。** 打包日志里一直有 `default Electron icon is used reason=application icon is not set`，产物用的是 Electron 自带的图标。**不影响使用，也不影响后续更新**——图标不进 `latest.yml`，不参与版本比较。换的时候记得**同时升版本号**，别原地覆盖已发布的附件（理由见第 2 章「发版」第一步）。
