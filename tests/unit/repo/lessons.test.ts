@@ -106,6 +106,20 @@ describe('docs/lessons 经验库', () => {
     expect(agentsDoc).toContain('docs/lessons')
   })
 
+  it('AGENTS.md 写明了什么时候必须追加经验，否则没人会写', async () => {
+    const agentsDoc = await readFile(repoPath('AGENTS.md'), 'utf8')
+
+    // 光说"踩到新坑就记"不可判定，AI 会永远认为自己没踩到。
+    // 必须给出可对照的触发条件，并且明确"不满足就别写"。
+    expect(agentsDoc).toContain('什么时候必须追加一条')
+    expect(agentsDoc).toContain('不要写')
+  })
+
+  it('AGENTS.md 引用了经验库策展人，避免定义了却没人发现', async () => {
+    const agentsDoc = await readFile(repoPath('AGENTS.md'), 'utf8')
+    expect(agentsDoc).toContain('lessons-curator.md')
+  })
+
   it('AGENTS.md 与索引里的文档链接都指向真实存在的文件', async () => {
     const sources = [
       { name: 'AGENTS.md', source: await readFile(repoPath('AGENTS.md'), 'utf8'), base: repoRoot },

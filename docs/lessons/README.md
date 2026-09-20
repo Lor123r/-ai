@@ -62,6 +62,7 @@
 | [0008](./0008-single-gate-command.md) | 单一门禁命令，降低执行偏差 | 流程 |
 | [0009](./0009-split-large-docs.md) | 文档过大要拆分，文档结构本身就是接口 | 文档 |
 | [0010](./0010-defensive-path-checks.md) | 路径校验要双重：边界 + 归属 | 安全 |
+| [0011](./0011-decidable-trigger-for-proactive-work.md) | 想让 AI 主动做的事，必须给出可对照的触发条件 | 流程 |
 
 ## 相关文档
 

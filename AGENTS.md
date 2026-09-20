@@ -41,6 +41,21 @@ npm run verify
 [tests/unit/repo/lessons.test.ts](./tests/unit/repo/lessons.test.ts) 守卫。
 踩到新坑时追加一条，编号只增不改。
 
+### 什么时候必须追加一条
+
+满足**任意一条**就要追加，不要等别人提醒：
+
+1. 你修掉了一个 bug，而**第一次尝试的修法是错的**（改完没通过，换了另一种才通过）。
+2. 你发现某处代码/文档的写法**与直觉相反**，且不写下来下一个人还会踩。
+3. 你因为**缺少某条信息**而做错了事（比如不知道某个约定、误读了某个字段）。
+4. 门禁红了，而红的原因**不是本次改动引入的**（环境、依赖、平台差异）。
+
+不满足以上任意一条时**不要写**。经验库的价值来自稀缺性，
+凑数的条目会让索引变长、让真正有用的那几条被淹没。
+
+写之前先扫一遍索引：已有条目能覆盖的，**改那一条**（在「现象」里补新证据），
+不要新开一条。只有结论本身变了才新开号，并在新条目里指回旧号。
+
 本文自身的写法（怎么给新项目写 `AGENTS.md`、按规模分档、常见错误）见
 [docs/agents-md-guide.md](./docs/agents-md-guide.md)。
 
@@ -57,6 +72,7 @@ npm run verify
 | [layering-guard.md](./.claude/agents/layering-guard.md) | 审查改动是否破坏分层与安全边界（只读） |
 | [test-author.md](./.claude/agents/test-author.md) | 按本仓库约定补测试、修测试确定性（只写文件，不跑命令） |
 | [commit-crafter.md](./.claude/agents/commit-crafter.md) | 起草提交信息与提交命令，交人类执行（只读，不提交） |
+| [lessons-curator.md](./.claude/agents/lessons-curator.md) | 判断本次改动是否值得沉淀成经验，值得就起草条目（只读，不落盘） |
 
 这些定义的格式由 [tests/unit/repo/agentDefinitions.test.ts](./tests/unit/repo/agentDefinitions.test.ts) 守卫：
 文件名必须是 kebab-case、`name` 必须与文件名一致、必须有 `description`，并且每个定义都要在本文件里被引用。
