@@ -62,3 +62,8 @@
 | [0008](./0008-single-gate-command.md) | 单一门禁命令，降低执行偏差 | 流程 |
 | [0009](./0009-split-large-docs.md) | 文档过大要拆分，文档结构本身就是接口 | 文档 |
 | [0010](./0010-defensive-path-checks.md) | 路径校验要双重：边界 + 归属 | 安全 |
+
+## 相关文档
+
+- [AGENTS.md 写作指南](../agents-md-guide.md) —— 怎么给新项目写 `AGENTS.md`、按规模分档、常见错误
+

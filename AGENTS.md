@@ -41,6 +41,9 @@ npm run verify
 [tests/unit/repo/lessons.test.ts](./tests/unit/repo/lessons.test.ts) 守卫。
 踩到新坑时追加一条，编号只增不改。
 
+本文自身的写法（怎么给新项目写 `AGENTS.md`、按规模分档、常见错误）见
+[docs/agents-md-guide.md](./docs/agents-md-guide.md)。
+
 ## 子 Agent 定义
 
 `.claude/agents/` 下是本项目的子 Agent 定义，用来把上面的规范落到具体动作上：
