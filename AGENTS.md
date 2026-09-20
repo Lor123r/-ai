@@ -30,6 +30,17 @@ npm run verify
 
 更多细节见 [README.md](./README.md)。
 
+## 经验库
+
+[docs/lessons/](./docs/lessons/README.md) 存放踩过的坑与验证过的做法，供人和 AI 共同学习。
+
+与本文的分工：**本文是必须遵守的规则，经验库是为什么这么定的经验。**
+规则会被执行，经验会被参考。改动前先扫一眼索引，看看有没有相关的既有结论。
+
+每条经验按「现象 / 根因 / 结论 / 反例」四节写，格式由
+[tests/unit/repo/lessons.test.ts](./tests/unit/repo/lessons.test.ts) 守卫。
+踩到新坑时追加一条，编号只增不改。
+
 ## 子 Agent 定义
 
 `.claude/agents/` 下是本项目的子 Agent 定义，用来把上面的规范落到具体动作上：
