@@ -248,3 +248,19 @@
 **`AGENTS.md` 的价值不在于写得多全，而在于每一条都能被判定、且都来自真实的失败。**
 
 写之前问自己：**AI 怎么知道自己违反了这条？** 答不上来的，删掉。
+
+---
+
+## 九、可直接复制的模板
+
+[docs/templates/](./templates/README.md) 里有开新项目时可直接复制的文件：
+
+| 文件 | 作用 |
+| --- | --- |
+| [templates/README.md](./templates/README.md) | 开工清单：复制什么、按什么顺序做、什么时候加什么 |
+| [templates/AGENTS.md](./templates/AGENTS.md) | 规则骨架，含占位符与注释说明 |
+| [templates/lessons-README.md](./templates/lessons-README.md) | 经验库写作规范 |
+| [templates/lessons.test.ts](./templates/lessons.test.ts) | 经验库格式守卫测试 |
+
+**复制的是格式与约定，不是内容。** 经验条目属于各项目自己，不要跨项目搬运——
+经验的价值一半在上下文里，抽走就退化成空话。

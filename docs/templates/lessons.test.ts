@@ -1,14 +1,33 @@
+/**
+ * 经验库格式守卫。
+ *
+ * 复制到 `<新项目>/tests/unit/repo/lessons.test.ts`。
+ *
+ * 需要按新项目调整的地方只有两处，都在下面的「可调参数」里：
+ * - LESSONS_DIR：经验库目录（默认 docs/lessons）
+ * - AGENTS_DOC：规则文件（默认 AGENTS.md）
+ *
+ * 如果新项目不用 vitest，把 describe/it/expect 换成对应测试框架的写法即可，
+ * 断言逻辑本身与框架无关。
+ */
 import { access, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
+// ── 可调参数 ──────────────────────────────────────────────
+
+const LESSONS_DIR = ['docs', 'lessons']
+const AGENTS_DOC = 'AGENTS.md'
+
+// ─────────────────────────────────────────────────────────
+
 const FILE_NAME = /^(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/
 
-/** 每条经验必须有的四节。缺一节就说明还没写清楚，见 docs/lessons/README.md。 */
+/** 每条经验必须有的四节。缺一节就说明还没写清楚，见经验库 README。 */
 const REQUIRED_SECTIONS = ['## 现象', '## 根因', '## 结论', '## 反例']
 
 /**
- * 用 cwd 定位仓库根：`npm run test` / `npm run verify` 都在包根执行。
+ * 用 cwd 定位仓库根：测试命令都在包根执行。
  * 不要改用 import.meta.url —— 在 vitest 里只有测试回调内联读到的那次才是本文件路径，
  * 在模块作用域或辅助函数里读到的是错值，而且不报错。
  */
@@ -28,7 +47,7 @@ async function pathExists(target: string): Promise<boolean> {
 }
 
 async function listLessonFiles(): Promise<string[]> {
-  const names = await readdir(repoPath('docs', 'lessons'))
+  const names = await readdir(repoPath(...LESSONS_DIR))
   return names.filter((name) => name.endsWith('.md') && name !== 'README.md').sort()
 }
 
@@ -36,16 +55,16 @@ async function readLessons(): Promise<Array<{ fileName: string; source: string }
   return Promise.all(
     (await listLessonFiles()).map(async (fileName) => ({
       fileName,
-      source: await readFile(repoPath('docs', 'lessons', fileName), 'utf8')
+      source: await readFile(repoPath(...LESSONS_DIR, fileName), 'utf8')
     }))
   )
 }
 
 /**
  * 经验库的格式错误不会被任何工具报出来，只会让条目慢慢退化成散文，
- * 所以用测试钉住。顺带保证 docs/lessons 不是空目录（空目录无法被 Git 跟踪）。
+ * 所以用测试钉住。顺带保证经验库目录不是空的（空目录无法被 Git 跟踪）。
  */
-describe('docs/lessons 经验库', () => {
+describe('经验库', () => {
   it('至少存在一条经验', async () => {
     expect(await listLessonFiles()).not.toEqual([])
   })
@@ -88,31 +107,31 @@ describe('docs/lessons 经验库', () => {
   })
 
   it('每条都在索引里被引用，避免加了却没人发现', async () => {
-    const index = await readFile(repoPath('docs', 'lessons', 'README.md'), 'utf8')
+    const index = await readFile(repoPath(...LESSONS_DIR, 'README.md'), 'utf8')
     const unreferenced = (await listLessonFiles()).filter((name) => !index.includes(name))
     expect(unreferenced).toEqual([])
   })
 
   it('索引里的链接都指向真实存在的文件', async () => {
-    const index = await readFile(repoPath('docs', 'lessons', 'README.md'), 'utf8')
+    const index = await readFile(repoPath(...LESSONS_DIR, 'README.md'), 'utf8')
     const linked = [...index.matchAll(/\]\(\.\/(\d{4}-[a-z0-9-]+\.md)\)/g)].map((m) => m[1]!)
     const existing = new Set(await listLessonFiles())
 
     expect(linked.filter((name) => !existing.has(name))).toEqual([])
   })
 
-  it('AGENTS.md 指向经验库，否则 AI 不会主动去读', async () => {
-    const agentsDoc = await readFile(repoPath('AGENTS.md'), 'utf8')
-    expect(agentsDoc).toContain('docs/lessons')
+  it('规则文件指向经验库，否则 AI 不会主动去读', async () => {
+    const agentsDoc = await readFile(repoPath(AGENTS_DOC), 'utf8')
+    expect(agentsDoc).toContain(LESSONS_DIR.join('/'))
   })
 
-  it('AGENTS.md 与索引里的文档链接都指向真实存在的文件', async () => {
+  it('规则文件与索引里的文档链接都指向真实存在的文件', async () => {
     const sources = [
-      { name: 'AGENTS.md', source: await readFile(repoPath('AGENTS.md'), 'utf8'), base: repoRoot },
+      { name: AGENTS_DOC, source: await readFile(repoPath(AGENTS_DOC), 'utf8'), base: repoRoot },
       {
-        name: 'docs/lessons/README.md',
-        source: await readFile(repoPath('docs', 'lessons', 'README.md'), 'utf8'),
-        base: repoPath('docs', 'lessons')
+        name: [...LESSONS_DIR, 'README.md'].join('/'),
+        source: await readFile(repoPath(...LESSONS_DIR, 'README.md'), 'utf8'),
+        base: repoPath(...LESSONS_DIR)
       }
     ]
 

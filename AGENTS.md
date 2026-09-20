@@ -44,6 +44,9 @@ npm run verify
 本文自身的写法（怎么给新项目写 `AGENTS.md`、按规模分档、常见错误）见
 [docs/agents-md-guide.md](./docs/agents-md-guide.md)。
 
+开新项目时，[docs/templates/](./docs/templates/README.md) 里有可直接复制的
+`AGENTS.md` 骨架、经验库规范与格式守卫测试。
+
 ## 子 Agent 定义
 
 `.claude/agents/` 下是本项目的子 Agent 定义，用来把上面的规范落到具体动作上：

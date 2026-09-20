@@ -66,4 +66,5 @@
 ## 相关文档
 
 - [AGENTS.md 写作指南](../agents-md-guide.md) —— 怎么给新项目写 `AGENTS.md`、按规模分档、常见错误
+- [新项目开工清单](../templates/README.md) —— 开新项目时复制哪些文件、按什么顺序做
 
