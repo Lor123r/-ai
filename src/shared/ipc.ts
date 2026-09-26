@@ -1,11 +1,16 @@
-import type { BookRepository } from '../core/ports/bookRepository'
-import type { BookImporter } from '../core/ports/bookImporter'
-import type { CoverReader } from '../core/ports/bookCover'
-import type { BookContentReader } from '../core/ports/bookContent'
-import type { SettingsRepository } from '../core/ports/settingsRepository'
-import type { AnnotationRepository } from '../core/ports/annotationRepository'
-import type { AnnotationTransfer } from '../core/ports/annotationTransfer'
-import type { UpdateCheckResult } from '../core/domain/update'
+/**
+ * 宿主契约（AppBridge 等）定义在 `bridge.ts`，这里只做转出。
+ *
+ * 拆开的理由：契约是「渲染进程需要什么」，与「Electron 怎么跨进程传」是两件事。
+ * 安卓宿主不需要任何 IPC 频道，但需要同一份契约。混在一个文件里会让契约被
+ * 频道常量拖住，换宿主时无法复用。
+ */
+export type {
+  AnnotationBridge,
+  AppBridge,
+  RuntimeVersions,
+  UpdateBridge
+} from './bridge'
 
 /** IPC 频道名集中定义，避免主进程与 preload 各写一份字符串而写错。 */
 export const BOOK_CHANNELS = {
@@ -91,38 +96,6 @@ export const ANNOTATION_EXPORT_BOUNDARY_MESSAGE = '不能把注解导出到应�
  * 和 removeByBook()（只给主进程的删书流程用 —— 删书必须先删书、后删注解，
  * 反序时删书失败就会造出「书还在、划线没了」的真数据丢失）。
  * 用 Pick 而不是另写一份声明：端口改了这里会跟着编译报错，不会有第二份定义走样。
- */
-export type AnnotationBridge = Pick<AnnotationRepository, 'listByBook' | 'save' | 'remove'>
-
-export interface RuntimeVersions {
-  /** 应用自身版本，来自 package.json 的 version（打包后由 electron-builder 写进产物）。 */
-  app: string
-  node: string
-  chrome: string
-  electron: string
-}
-
-/**
- * 渲染层能看到的更新接口。
  *
- * 刻意只有一个 `check()`：这一轮不做下载与安装（未签名的更新包会被 Windows 拒绝），
- * 所以没有 `download()` / `install()` 可暴露。等签名到位再加，那时这里会多两个方法，
- * 而不是现在先摆两个空壳。
+ * 定义在 `bridge.ts`，这里转出以保持既有 import 路径可用。
  */
-export interface UpdateBridge {
-  check: () => Promise<UpdateCheckResult>
-}
-
-/** preload 通过 contextBridge 暴露给渲染进程的完整接口。 */
-export interface AppBridge {
-  /** 版本信息是异步的：应用版本只有主进程知道，见 RUNTIME_CHANNELS 的注释。 */
-  versions: Promise<RuntimeVersions>
-  update: UpdateBridge
-  books: BookRepository
-  annotations: AnnotationBridge
-  annotationTransfer: AnnotationTransfer
-  library: BookImporter
-  cover: CoverReader
-  content: BookContentReader
-  settings: SettingsRepository
-}

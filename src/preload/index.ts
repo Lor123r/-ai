@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppBridge } from '@shared/ipc'
+import type { AppBridge } from '@shared/bridge'
 import {
   ANNOTATION_CHANNELS,
   ANNOTATION_TRANSFER_CHANNELS,
