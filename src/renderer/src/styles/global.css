@@ -325,8 +325,19 @@ body {
   opacity: 0.5;
 }
 
+/*
+ * 高度必须由 flex 给，不能写 height: 100%。
+ *
+ * .reader__body 的高度来自 flex: 1，是「不确定高度」。桌面 Chromium 会把
+ * 子元素的 height: 100% 解析成 flex 算出来的那个高度，但安卓 WebView 不会 ——
+ * 它按 auto 处理，于是 epub.js 量到高度 0，分页时把正文塞进一个极窄的列，
+ * CJK 再触发竖排回退，整页就变成右边一条竖排窄条。
+ *
+ * 改成 flex: 1 之后高度由父级 flex 直接给出，不依赖百分比解析，两边一致。
+ */
 .reader__viewport {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   margin: 0 auto;
   width: min(900px, 100%);
   overflow: hidden;
@@ -367,6 +378,8 @@ body {
 /* 抽屉在右侧浮起，不改变正文宽度，设置面板的每次调整都不会因为布局跳动而看不清效果 */
 .reader__body {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
@@ -742,4 +755,87 @@ body {
 .book-card__remove:hover {
   border-color: #e3bdb2;
   color: #a2402c;
+}
+
+/*
+ * 窄屏（手机竖屏）。
+ *
+ * 这套样式原本只按桌面窗口写：书架用 minmax(180px, 1fr) 自动列，阅读器头部
+ * 一行塞下五个按钮加标题、状态与进度。放到 360px 宽的手机上，前者只剩一列、
+ * 封面按 3/4 比例被拉到 400px 高，后者直接横向溢出。
+ *
+ * 断点取 600px：再宽一点就该用桌面布局，再窄一点连两个按钮都排不下。
+ */
+@media (max-width: 600px) {
+  .app-header {
+    padding: 12px 16px;
+  }
+
+  .app-header__title {
+    font-size: 17px;
+  }
+
+  /* 版本号在手机上不是必要信息，留着只会把标题挤掉 */
+  .app-header__runtime {
+    display: none;
+  }
+
+  .app-body {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  /* 两列而不是一列：一列时封面按 3/4 比例会高到一屏放不下 */
+  .shelf {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+
+  .book-card {
+    padding: 10px;
+  }
+
+  .book-card__cover-letter {
+    font-size: 26px;
+  }
+
+  .shelf-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  /*
+   * 阅读器头部换行排。
+   *
+   * 桌面是一行：返回 / 目录 / 注解 / 书签 / 设置 / 标题 / 状态 / 进度。
+   * 手机上这一行有 400px 以上，必须允许换行，并让标题独占一行。
+   */
+  .reader__header,
+  .reader__controls {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .reader__header h1 {
+    /* 独占一整行，排在按钮之后 */
+    order: 10;
+    flex-basis: 100%;
+    font-size: 15px;
+  }
+
+  .reader__header button,
+  .reader__controls button {
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .reader__status {
+    font-size: 12px;
+  }
+
+  /* 抽屉占满宽度：手机上 78% 只剩一条，目录项会被截断 */
+  .reader__drawer {
+    width: 100%;
+  }
 }

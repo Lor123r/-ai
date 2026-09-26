@@ -162,6 +162,24 @@ export default function EpubReaderView({
     renditionRef.current?.resize()
   }, [settings?.pageMargin, settingsReady])
 
+  // 容器尺寸一变就重新分页。
+  //
+  // 只靠上面那个 effect 不够：它只在 pageMargin 变化时跑，而首帧渲染时容器
+  // 往往还没拿到最终尺寸（安卓 WebView 尤其明显，系统栏与软键盘都会改变可用高度）。
+  // epub.js 一旦按错误尺寸分好页，就会一直停在那个尺寸上 —— 真机上表现为正文
+  // 退化成一条竖排窄条。ResizeObserver 把「尺寸真的变了」这件事直接告诉它，
+  // 顺带覆盖了旋转屏幕与窗口缩放。
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport || typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(() => {
+      renditionRef.current?.resize()
+    })
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [settingsReady])
+
   useEffect(() => {
     let active = true
     let writer: LocatorWriter | null = null
