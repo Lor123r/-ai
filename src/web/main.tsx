@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from '@renderer/App'
 import '@renderer/styles/global.css'
 import { createWebBridge } from './createWebBridge'
+import { installDiagnostics } from './diagnostics'
 
 /**
  * 浏览器 / 安卓 WebView 的入口。
@@ -16,6 +17,10 @@ import { createWebBridge } from './createWebBridge'
  */
 const bridge = createWebBridge(__APP_VERSION__)
 window.api = bridge
+
+// 真机上没有 adb 时，这是唯一的报错出口。必须在渲染之前装，
+// 否则挂载阶段的异常会漏掉。
+installDiagnostics()
 
 const container = document.getElementById('root')
 if (!container) throw new Error('找不到 #root 挂载点')

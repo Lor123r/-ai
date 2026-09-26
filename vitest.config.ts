@@ -9,7 +9,8 @@ export default defineConfig({
       '@renderer': resolve('src/renderer/src'),
       '@preload': resolve('src/preload'),
       '@core': resolve('src/core'),
-      '@shared': resolve('src/shared')
+      '@shared': resolve('src/shared'),
+      '@web': resolve('src/web')
     }
   },
   test: {

@@ -20,7 +20,8 @@
       "@renderer/*": ["./src/renderer/src/*"],
       "@preload/*": ["./src/preload/*"],
       "@core/*": ["./src/core/*"],
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@web/*": ["./src/web/*"]
     }
   },
   "include": [

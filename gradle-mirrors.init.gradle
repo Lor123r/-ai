@@ -1,0 +1,37 @@
+// Gradle 初始化脚本：把仓库和发行版都指向国内镜像。
+//
+// 为什么需要它：这台机器连不上 services.gradle.org 和 repo1.maven.org，
+// 而 Capacitor 生成的 android/build.gradle 里写死了 google() + mavenCentral()。
+// 直接改那个文件不行——它是生成物，`cap add android` 会覆盖。
+// init 脚本在构建时注入，不碰生成物。
+//
+// 用法：gradlew --init-script gradle-mirrors.init.gradle ...
+// 或者放进 GRADLE_USER_HOME/init.d/ 让它自动生效。
+
+def aliyun = 'https://maven.aliyun.com/repository'
+def googleMirror = 'https://maven.aliyun.com/repository/google'
+
+settingsEvaluated { settings ->
+  settings.pluginManagement {
+    repositories {
+      maven { url "$googleMirror" }
+      maven { url "$aliyun/gradle-plugin" }
+      maven { url "$aliyun/public" }
+      gradlePluginPortal()
+    }
+  }
+}
+
+allprojects {
+  buildscript {
+    repositories {
+      maven { url "$googleMirror" }
+      maven { url "$aliyun/gradle-plugin" }
+      maven { url "$aliyun/public" }
+    }
+  }
+  repositories {
+    maven { url "$googleMirror" }
+    maven { url "$aliyun/public" }
+  }
+}
