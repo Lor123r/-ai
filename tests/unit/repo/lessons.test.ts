@@ -106,6 +106,15 @@ describe('docs/lessons 经验库', () => {
     expect(agentsDoc).toContain('docs/lessons')
   })
 
+  it('写作规范要求结论限定范围并记录观测环境', async () => {
+    const index = await readFile(repoPath('docs', 'lessons', 'README.md'), 'utf8')
+
+    // 0015 翻车两次都是因为把「一个时间点的观测」写成「稳定的结论」。
+    // 规范里必须留下这条，否则下一个人还会写全称判断。
+    expect(index).toContain('不要写全称判断')
+    expect(index).toContain('环境是变量，不是常量')
+  })
+
   it('AGENTS.md 写明了什么时候必须追加经验，否则没人会写', async () => {
     const agentsDoc = await readFile(repoPath('AGENTS.md'), 'utf8')
 
