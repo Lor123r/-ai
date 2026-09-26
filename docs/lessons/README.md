@@ -66,7 +66,7 @@
 | [0012](./0012-trust-boundary-survives-host-swap.md) | 换宿主不等于渲染层的数据变可信，校验跟着数据来源走 | 安全 |
 | [0013](./0013-localhost-not-ip-literal.md) | 探测本地服务用 localhost，不要用 127.0.0.1 | 环境 |
 | [0014](./0014-android-toolchain-without-studio.md) | 装安卓工具链用 cmdline-tools，不需要 Android Studio | 环境 |
-| [0015](./0015-github-unreachable-use-mirrors.md) | 本机 GitHub 不通，下载要走镜像站 | 环境 |
+| [0015](./0015-github-unreachable-use-mirrors.md) | 大文件下载会静默挂起，先探测最终地址再决定走不走镜像 | 环境 |
 | [0016](./0016-percentage-height-in-android-webview.md) | 高度要由 flex 给，`height: 100%` 在安卓 WebView 里解析成 auto | 环境 |
 | [0017](./0017-iframe-content-needs-its-own-listeners.md) | 正文在 iframe 里，父文档的监听收不到它的事件 | 前端 |
 | [0018](./0018-document-level-gestures-swallow-ui-clicks.md) | 绑在 document 上的手势监听会吞掉自己 UI 的点击 | 前端 |

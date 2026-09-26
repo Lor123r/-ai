@@ -1,4 +1,4 @@
-# 0015 本机 GitHub 不通，下载要走镜像站
+# 0015 大文件下载会静默挂起，先探测最终地址再决定走不走镜像
 
 ## 现象
 
@@ -19,9 +19,22 @@ https://github.com/adoptium/temurin21-binaries/releases/download/...
 
 同一时间 `registry.npmmirror.com` 返回 200，`dl.google.com` 返回 200。
 
+之前 `npx playwright install chromium` 卡了 8 分钟无输出，是同一个原因：
+Playwright 的浏览器包也托管在 GitHub 上。
+
+**但 GitHub 并不是整体不通。** 后来 `git push` 到
+`https://github.com/Lor123r/-ai.git` 一次就成功，`gh` 也能正常调 API。
+所以「GitHub 不通」这个说法是错的，见下面「根因」。
+
 ## 根因
 
-**这台机器访问不了 GitHub，但其他站点正常。**
+**失败的是「大文件下载」这条路径，不是 GitHub 这个域名。**
+
+`git push` 走的是 git 自己的 HTTP 传输，数据量小、有分块与重试；
+`gh` 走的是 API，响应是几十 KB 的 JSON。两者都正常。
+
+而 release 附件动辄几十上百 MB，走的是另一条链路，会**静默挂起**——
+没有 4xx/5xx，没有超时提示，就是一直不返回。
 
 这个失败模式特别难查，因为：
 
@@ -31,14 +44,20 @@ https://github.com/adoptium/temurin21-binaries/releases/download/...
    让人以为源是通的——真正不通的是重定向之后的目标
 3. 失败是**静默挂起**而不是报错，没有超时提示
 
-之前 `npx playwright install chromium` 卡了 8 分钟无输出，是同一个原因：
-Playwright 的浏览器包也托管在 GitHub 上。
+**把「大文件下载慢/挂起」误判成「GitHub 不通」的代价**：会顺手放弃
+`git push`、`gh`、`gh pr create` 这些其实完全可用的能力，绕远路。
 
 ## 结论
 
-**在这台机器上下载东西，先确认最终地址不在 GitHub 上。**
+**先按用途分类，再决定要不要绕。**
 
-判定方式：**`curl -I` 看有没有 307/302 重定向，然后单独探测重定向目标。**
+| 用途 | 走不走镜像 | 判定方式 |
+| --- | --- | --- |
+| `git push` / `git fetch` | 不用 | 直接推，成功就是成功 |
+| `gh` 调 API | 不用 | 直接调 |
+| release 附件、二进制包（几十 MB 以上） | 要 | `curl -I` 看有没有 307/302，再单独探测重定向目标 |
+
+判定大文件下载的关键：**`curl -I` 看有没有 307/302 重定向，然后单独探测重定向目标。**
 只看第一跳的状态码会得出错误结论。
 
 可用的镜像（实测 200）：
@@ -53,6 +72,16 @@ Playwright 的浏览器包也托管在 GitHub 上。
 - 装 Electron 二进制时用 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
 
 ## 反例
+
+不要把「某个下载挂了」推广成「GitHub 不通」，从而放弃可用的能力：
+
+```powershell
+# 错：因为一次 release 附件下载失败，就认为推送也要绕路
+#     —— git push 和 gh 其实一直是通的
+```
+
+也不要反过来，以为「`gh` 能用」就说明「release 附件也能下」——
+两者走的链路不同，要分别探测。
 
 不要用 `Invoke-WebRequest` 下载大文件——卡住时没有任何反馈：
 
