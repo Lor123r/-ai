@@ -63,6 +63,8 @@
 | [0009](./0009-split-large-docs.md) | 文档过大要拆分，文档结构本身就是接口 | 文档 |
 | [0010](./0010-defensive-path-checks.md) | 路径校验要双重：边界 + 归属 | 安全 |
 | [0011](./0011-decidable-trigger-for-proactive-work.md) | 想让 AI 主动做的事，必须给出可对照的触发条件 | 流程 |
+| [0012](./0012-trust-boundary-survives-host-swap.md) | 换宿主不等于渲染层的数据变可信，校验跟着数据来源走 | 安全 |
+| [0013](./0013-localhost-not-ip-literal.md) | 探测本地服务用 localhost，不要用 127.0.0.1 | 环境 |
 
 ## 相关文档
 
