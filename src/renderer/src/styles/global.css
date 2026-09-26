@@ -817,6 +817,16 @@ body {
     padding: 10px 12px;
   }
 
+  /*
+   * 阅读时收起顶栏与底栏，把高度全留给正文。
+   *
+   * 手机上顶栏要占两行（五个按钮 + 状态 + 标题），底栏再占一行，
+   * 加起来吃掉近三分之一屏。点屏幕中间唤出，再点一次收起。
+   *
+   * 收起规则本身不放在这个断点里（见文件末尾）：桌面端也能手动收起，
+   * 只是初始状态不同 —— 窄屏默认收起，宽屏默认展开。
+   */
+
   .reader__header h1 {
     /* 独占一整行，排在按钮之后 */
     order: 10;
@@ -838,4 +848,18 @@ body {
   .reader__drawer {
     width: 100%;
   }
+}
+
+/*
+ * 收起顶栏与底栏。
+ *
+ * 放在断点外面：桌面端也能手动收起（点正文中间），只是初始状态不同 ——
+ * 窄屏默认收起，宽屏默认展开，由 useChromeVisibility 决定。
+ *
+ * 用 display: none 而不是 visibility / opacity：收起时它不该占位，
+ * 也不该被 Tab 聚焦。
+ */
+.reader__header[data-visible='false'],
+.reader__controls[data-visible='false'] {
+  display: none;
 }

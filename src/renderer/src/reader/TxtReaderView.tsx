@@ -17,6 +17,8 @@ import TocDrawer from './TocDrawer'
 import { decodeText } from './decodeText'
 import { createLocatorWriter, type LocatorWriter } from './locatorWriter'
 import { readerAppearanceStyle, type ReaderAppearanceStyle } from './readerAppearance'
+import { usePageTurn } from './usePageTurn'
+import { useChromeVisibility } from './useChromeVisibility'
 import {
   clampPage,
   columnGap,
@@ -100,6 +102,8 @@ export default function TxtReaderView({
   const [layout, setLayout] = useState<TextLayout>(INITIAL_LAYOUT)
   const [percent, setPercent] = useState<number | null>(null)
   const [panel, setPanel] = useState<ReaderPanel>('none')
+  // 阅读时收起顶栏与底栏，点屏幕中间唤出
+  const { chromeVisible, toggleChrome } = useChromeVisibility()
   const { settings, update } = useReaderSettings(settingsRepository, now)
   const settingsReady = settings !== null
   const pageMargin = settings?.pageMargin ?? 0
@@ -265,8 +269,16 @@ export default function TxtReaderView({
     }
   }
 
-  function goToEntry(entry: TextTocEntry): void {
-    if (status !== 'ready') return
+  // 翻页手势：左右滑动 + 点击屏幕左右两侧。TXT 的正文不在 iframe 里，
+  // 只绑外层容器就够，所以不传 innerDocument。
+  usePageTurn({
+    targetRef: flowRef,
+    onMove: move,
+    onToggleChrome: toggleChrome,
+    disabled: status !== 'ready'
+  })
+
+  function goToEntry(entry: TextTocEntry): void {    if (status !== 'ready') return
 
     const target = blocks[entry.blockIndex] ?? ''
     pendingJump.current = { offset: entry.offset, length: target.length }
@@ -296,6 +308,7 @@ export default function TxtReaderView({
       onClose={onClose}
       tocDisabled={tocEntries.length === 0}
       onMove={move}
+      chromeVisible={chromeVisible}
     >
       <div
         className="reader__viewport reader__viewport--text"

@@ -26,6 +26,13 @@ export interface ReaderChromeProps {
   /** 正文容器的 ref；EPUB 要靠它给选区浮条算坐标。 */
   bodyRef?: Ref<HTMLDivElement>
   onMove: (direction: 'next' | 'prev') => void
+  /**
+   * 顶栏是否可见。
+   *
+   * 手机上顶栏要占两行，一直挂着会把正文挤掉一大块。阅读时收起，
+   * 点屏幕中间再唤出。桌面窗口够高，调用方直接传 true 即可。
+   */
+  chromeVisible?: boolean
   /** 正文区域，含抽屉与浮条。 */
   children: ReactNode
   style?: CSSProperties
@@ -53,6 +60,7 @@ export default function ReaderChrome({
   extraActions,
   bodyRef,
   onMove,
+  chromeVisible = true,
   children,
   style
 }: ReaderChromeProps): React.JSX.Element {
@@ -62,7 +70,7 @@ export default function ReaderChrome({
 
   return (
     <section className="reader" aria-label={`正在阅读《${title}》`} data-theme={theme} style={style}>
-      <header className="reader__header">
+      <header className="reader__header" data-visible={chromeVisible}>
         <button type="button" onClick={onClose}>
           返回书架
         </button>
@@ -112,7 +120,12 @@ export default function ReaderChrome({
       <div ref={bodyRef} className="reader__body">
         {children}
       </div>
-      <footer className="reader__controls">
+      {/*
+        底栏按钮在手机上默认收起（见 global.css 的窄屏断点），桌面端始终显示。
+        保留而不是删掉：桌面鼠标用户需要明确的点击目标，屏幕阅读器与键盘
+        Tab 也依赖原生 button。手机上翻页走手势，这两个按钮基本用不到。
+      */}
+      <footer className="reader__controls" data-visible={chromeVisible}>
         <button type="button" onClick={() => onMove('prev')} disabled={status !== 'ready'}>
           上一页
         </button>

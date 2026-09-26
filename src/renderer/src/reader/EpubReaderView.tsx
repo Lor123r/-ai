@@ -29,6 +29,8 @@ import { createEpubBook, spineLength, type EpubBook, type EpubRendition } from '
 import { readToc } from './epubToc'
 import { toRelocationInput } from './epubRelocation'
 import { createLocatorWriter, type LocatorWriter } from './locatorWriter'
+import { usePageTurn } from './usePageTurn'
+import { useChromeVisibility } from './useChromeVisibility'
 import { applyReaderSettings } from './readerAppearance'
 import { useBookAnnotations } from './useBookAnnotations'
 import { useReaderSettings } from './useReaderSettings'
@@ -135,6 +137,10 @@ export default function EpubReaderView({
   const [activeBookmarkSyncer, setActiveBookmarkSyncer] = useState<BookmarkMarkSyncer | null>(null)
   const [toc, setToc] = useState<TocEntry[]>([])
   const [panel, setPanel] = useState<ReaderPanel>('none')
+  // EPUB 正文所在的 iframe document；翻页手势要绑进去才收得到正文上的点击
+  const [innerDocument, setInnerDocument] = useState<Document | null>(null)
+  // 阅读时收起顶栏，点屏幕中间唤出
+  const { chromeVisible, toggleChrome } = useChromeVisibility()
   const { settings, update } = useReaderSettings(settingsRepository, now)
   const {
     annotations,
@@ -264,6 +270,13 @@ export default function EpubReaderView({
         setSelection({ cfi: cfiRange, excerpt, placement })
       })
 
+      // 翻页手势要绑进 iframe 内部：正文在 iframe 里，父文档收不到它的 pointer 事件。
+      // epub.js 每次换页都会重建 iframe，所以每次 rendered 都要重新取一次 document。
+      rendition.on('rendered', (_section, view) => {
+        if (!active) return
+        setInnerDocument(view?.contents?.document ?? null)
+      })
+
       await book.ready
       if (!active) return
       setToc(readToc(book))
@@ -335,6 +348,16 @@ export default function EpubReaderView({
     if (!rendition || status !== 'ready') return
     void rendition[direction]().then(() => setError(null), fail)
   }
+
+  // 翻页手势：左右滑动 + 点击屏幕左右两侧。正文在 iframe 里，所以要把
+  // iframe 的 document 一起交给它，否则点在正文上收不到事件。
+  usePageTurn({
+    targetRef: bodyRef,
+    innerDocument,
+    onMove: move,
+    onToggleChrome: toggleChrome,
+    disabled: status !== 'ready'
+  })
 
   function goTo(entry: TocEntry): void {
     const rendition = renditionRef.current
@@ -450,6 +473,7 @@ export default function EpubReaderView({
       extraActions={bookmarkAction}
       bodyRef={bodyRef}
       onMove={move}
+      chromeVisible={chromeVisible}
     >
       <div ref={viewportRef} className="reader__viewport" data-status={status} />
       {selection !== null && annotationStatus === 'ready' ? (

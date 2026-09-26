@@ -51,6 +51,8 @@ export interface EpubSelection {
 
 /** epub.js 的 Contents，只声明我们真正读取的字段。 */
 export interface EpubContents {
+  /** iframe 内部的 document。翻页手势要绑到它上面才收得到正文上的点击。 */
+  document?: Document
   window?: {
     getSelection?(): EpubSelection | null
     /** iframe 元素自身，用来把 iframe 内部的坐标换算到宿主文档。 */
@@ -82,6 +84,11 @@ export interface EpubAnnotationLayer {
 export interface EpubRenditionEvents {
   relocated: [location: EpubRelocation]
   selected: [cfiRange: string, contents: EpubContents]
+  /**
+   * 一节渲染完成。epub.js 传的是 `(section, view)`，view 上挂着这一节的
+   * Contents —— 翻页手势要靠它拿到 iframe 内部的 document。
+   */
+  rendered: [section: unknown, view: { contents?: EpubContents } | undefined]
 }
 
 export interface EpubRendition {
