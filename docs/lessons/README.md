@@ -114,7 +114,7 @@ release 附件（几十 MB 以上）会静默挂起；git push 与 gh 不受影�
 | [0005](./0005-exhaustive-switch-with-never.md) | 用 `never` 收口穷举，漏一种就编译失败 | 所有枚举映射 |
 | [0004](./0004-pure-function-for-untestable-env.md) | 环境测不到的逻辑抽成纯函数 | 所有依赖环境的逻辑 |
 | [0003](./0003-load-bearing-order.md) | 顺序有依赖的步骤要在代码里标注"承重" | 所有有顺序依赖的初始化 |
-| [0006](./0006-comment-why-not-what.md) | 注释写"为什么"和"换序会坏"，不写"是什么" | 所有非显然的代码 |
+| [0019](./0019-comments-and-docs-write-what-readers-cannot-see.md) | 注释与文档只写读者看不出来的东西 | 所有注释与文档 |
 
 ### 三、环境与流程（换个时间/机器可能就不一样）
 
@@ -125,8 +125,16 @@ release 附件（几十 MB 以上）会静默挂起；git push 与 gh 不受影�
 | [0014](./0014-android-toolchain-without-studio.md) | 装安卓工具链用 cmdline-tools，不需要 Android Studio | 仅本机 | — |
 | [0008](./0008-single-gate-command.md) | 单一门禁命令，降低执行偏差 | 本仓库流程 | — |
 | [0011](./0011-decidable-trigger-for-proactive-work.md) | 想让 AI 主动做的事，必须给出可对照的触发条件 | 本仓库流程 | — |
-| [0007](./0007-document-own-limitations.md) | 文档自陈局限，防止 AI 把已知取舍当 bug 修 | 本仓库文档 | — |
-| [0009](./0009-split-large-docs.md) | 文档过大要拆分，文档结构本身就是接口 | 本仓库文档 | — |
+
+### 已合并的条目
+
+编号**只增不改**，所以合并后旧号留空，不重新编号。旧号在此登记，便于回溯。
+
+| 旧号 | 去向 | 原因 |
+| --- | --- | --- |
+| 0006 注释写"为什么"不写"是什么" | → [0019](./0019-comments-and-docs-write-what-readers-cannot-see.md) | 三条同属"只写读者看不出来的东西"，各占一条太占地方 |
+| 0007 文档自陈局限 | → [0019](./0019-comments-and-docs-write-what-readers-cannot-see.md) | 同上 |
+| 0009 文档过大要拆分 | → [0019](./0019-comments-and-docs-write-what-readers-cannot-see.md) | 同上 |
 
 ## 相关文档
 

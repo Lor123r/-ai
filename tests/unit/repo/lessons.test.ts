@@ -55,13 +55,25 @@ describe('docs/lessons 经验库', () => {
     expect(invalid).toEqual([])
   })
 
-  it('编号连续且不重复', async () => {
+  it('编号递增且不重复', async () => {
     const numbers = (await listLessonFiles()).map((name) => Number(FILE_NAME.exec(name)![1]))
 
+    // 编号只增不改：合并条目时旧号留空，不重新编号，
+    // 否则所有指向旧号的引用（代码注释、提交信息、其他经验）都会失效。
     expect(numbers).toEqual([...numbers].sort((a, b) => a - b))
     expect(new Set(numbers).size).toBe(numbers.length)
     expect(numbers[0]).toBe(1)
-    expect(numbers[numbers.length - 1]).toBe(numbers.length)
+  })
+
+  it('被合并掉的旧号在索引里登记了去向', async () => {
+    const index = await readFile(repoPath('docs', 'lessons', 'README.md'), 'utf8')
+    const numbers = (await listLessonFiles()).map((name) => Number(FILE_NAME.exec(name)![1]))
+    const max = Math.max(...numbers)
+    const missing = Array.from({ length: max }, (_, i) => i + 1).filter((n) => !numbers.includes(n))
+
+    // 留空的号必须能查到去哪了，否则读者看到断号会以为文件丢了。
+    const undocumented = missing.filter((n) => !index.includes(String(n).padStart(4, '0')))
+    expect(undocumented).toEqual([])
   })
 
   it('每条都有四节：现象 / 根因 / 结论 / 反例', async () => {
@@ -98,10 +110,19 @@ describe('docs/lessons 经验库', () => {
     const files = await listLessonFiles()
 
     // 索引按「违反的后果」分三档。分档的价值在于「一条错了只影响它那一档」，
-    // 所以每条必须恰好出现一次——漏放会让它从索引里消失，重复放会让档位失去意义。
+    // 所以每条必须恰好出现在一个档位表里——漏放会让它从索引里消失，
+    // 重复放会让档位失去意义。
+    //
+    // 只统计档位表（`### 一/二/三、` 到下一个 `###` 之间），
+    // 因为「已合并的条目」表里也会出现文件名，那是回溯登记，不算归位。
+    const tierSections = index
+      .split(/^### /m)
+      .filter((section) => /^[一二三]、/.test(section))
+      .join('\n')
+
     const counts = files.map((name) => ({
       name,
-      count: index.split(name).length - 1
+      count: tierSections.split(name).length - 1
     }))
 
     expect(counts.filter((entry) => entry.count !== 1)).toEqual([])
@@ -147,6 +168,19 @@ describe('docs/lessons 经验库', () => {
     // 必须给出可对照的触发条件，并且明确"不满足就别写"。
     expect(agentsDoc).toContain('什么时候必须追加一条')
     expect(agentsDoc).toContain('不要写')
+  })
+
+  it('AGENTS.md 的追加条件以收益闸门为准，而不是以稀缺性为准', async () => {
+    const agentsDoc = await readFile(repoPath('AGENTS.md'), 'utf8')
+
+    // 「稀缺」把条目数当目标，但一条用不上的经验是负资产：
+    // 它挤掉真正有用的条目，还省不下任何验证成本。
+    // 判据必须是「省下的验证成本」，所以闸门要问会不会重踩、查起来要多久。
+    expect(agentsDoc).toContain('收益闸门')
+    expect(agentsDoc).toContain('会不会重新踩')
+    expect(agentsDoc).toContain('要花多久才能查出来')
+    expect(agentsDoc).toContain('经验的价值是省下的验证成本')
+    expect(agentsDoc).not.toContain('价值来自稀缺性')
   })
 
   it('AGENTS.md 引用了经验库策展人，避免定义了却没人发现', async () => {
