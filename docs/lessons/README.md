@@ -84,26 +84,49 @@ release 附件（几十 MB 以上）会静默挂起；git push 与 gh 不受影�
 
 ## 索引
 
-| 编号 | 结论 | 主题 |
+分三档，**按「违反的后果」定档**，不按主题。问一句「违反了会怎样」就能定档，不用争论。
+
+| 档位 | 违反的后果 | 读法 |
 | --- | --- | --- |
-| [0001](./0001-required-param-over-default.md) | 需要区分环境的参数设为必填，让遗漏变成编译错误 | 类型 |
-| [0002](./0002-fail-loudly-over-fake-success.md) | 宁可明确失败，也不要让界面显示"已保存"而磁盘为空 | 错误处理 |
-| [0003](./0003-load-bearing-order.md) | 顺序有依赖的步骤要在代码里标注"承重" | 可维护性 |
-| [0004](./0004-pure-function-for-untestable-env.md) | 环境测不到的逻辑抽成纯函数 | 测试 |
-| [0005](./0005-exhaustive-switch-with-never.md) | 用 `never` 收口穷举，漏一种就编译失败 | 类型 |
-| [0006](./0006-comment-why-not-what.md) | 注释写"为什么"和"换序会坏"，不写"是什么" | 可维护性 |
-| [0007](./0007-document-own-limitations.md) | 文档自陈局限，防止 AI 把已知取舍当 bug 修 | 文档 |
-| [0008](./0008-single-gate-command.md) | 单一门禁命令，降低执行偏差 | 流程 |
-| [0009](./0009-split-large-docs.md) | 文档过大要拆分，文档结构本身就是接口 | 文档 |
-| [0010](./0010-defensive-path-checks.md) | 路径校验要双重：边界 + 归属 | 安全 |
-| [0011](./0011-decidable-trigger-for-proactive-work.md) | 想让 AI 主动做的事，必须给出可对照的触发条件 | 流程 |
-| [0012](./0012-trust-boundary-survives-host-swap.md) | 换宿主不等于渲染层的数据变可信，校验跟着数据来源走 | 安全 |
-| [0013](./0013-localhost-not-ip-literal.md) | 探测本地服务用 localhost，不要用 127.0.0.1 | 环境 |
-| [0014](./0014-android-toolchain-without-studio.md) | 装安卓工具链用 cmdline-tools，不需要 Android Studio | 环境 |
-| [0015](./0015-github-unreachable-use-mirrors.md) | 外网可达性取决于加速器，是变量不是常量；先探测再决定绕不绕 | 环境 |
-| [0016](./0016-percentage-height-in-android-webview.md) | 高度要由 flex 给，`height: 100%` 在安卓 WebView 里解析成 auto | 环境 |
-| [0017](./0017-iframe-content-needs-its-own-listeners.md) | 正文在 iframe 里，父文档的监听收不到它的事件 | 前端 |
-| [0018](./0018-document-level-gestures-swallow-ui-clicks.md) | 绑在 document 上的手势监听会吞掉自己 UI 的点击 | 前端 |
+| 一、红线 | 安全事故 / 数据丢失 / 静默错误 | 必须遵守，没有例外 |
+| 二、结构 | 能跑，但行为不对，埋下难查的 bug | 写相关代码前先读 |
+| 三、环境与流程 | 只是绕远路 / 浪费时间 | 遇到具体问题时查，**可能过期** |
+
+第三档天然是「换个时间/机器可能就不一样」的，所以多一列**观测条件**——
+读者一眼就能判断这条要不要复测。**第三档错了不影响第一、二档。**
+
+### 一、红线（违反会出安全事故或数据丢失）
+
+| 编号 | 结论 | 适用范围 |
+| --- | --- | --- |
+| [0010](./0010-defensive-path-checks.md) | 路径校验要双重：边界 + 归属 | 所有来自持久化数据的路径 |
+| [0012](./0012-trust-boundary-survives-host-swap.md) | 换宿主不等于渲染层的数据变可信，校验跟着数据来源走 | 所有跨进程/跨层数据 |
+| [0002](./0002-fail-loudly-over-fake-success.md) | 宁可明确失败，也不要让界面显示"已保存"而磁盘为空 | 所有持久化与降级实现 |
+
+### 二、结构（违反会埋下难查的 bug）
+
+| 编号 | 结论 | 适用范围 |
+| --- | --- | --- |
+| [0017](./0017-iframe-content-needs-its-own-listeners.md) | 正文在 iframe 里，父文档的监听收不到它的事件 | 所有 iframe 内容 |
+| [0018](./0018-document-level-gestures-swallow-ui-clicks.md) | 绑在 document 上的手势监听会吞掉自己 UI 的点击 | 所有全局手势 |
+| [0016](./0016-percentage-height-in-android-webview.md) | 高度要由 flex 给，`height: 100%` 在安卓 WebView 里解析成 auto | 所有安卓 WebView 布局 |
+| [0001](./0001-required-param-over-default.md) | 需要区分环境的参数设为必填，让遗漏变成编译错误 | 所有环境相关参数 |
+| [0005](./0005-exhaustive-switch-with-never.md) | 用 `never` 收口穷举，漏一种就编译失败 | 所有枚举映射 |
+| [0004](./0004-pure-function-for-untestable-env.md) | 环境测不到的逻辑抽成纯函数 | 所有依赖环境的逻辑 |
+| [0003](./0003-load-bearing-order.md) | 顺序有依赖的步骤要在代码里标注"承重" | 所有有顺序依赖的初始化 |
+| [0006](./0006-comment-why-not-what.md) | 注释写"为什么"和"换序会坏"，不写"是什么" | 所有非显然的代码 |
+
+### 三、环境与流程（换个时间/机器可能就不一样）
+
+| 编号 | 结论 | 适用范围 | 观测条件 |
+| --- | --- | --- | --- |
+| [0015](./0015-github-unreachable-use-mirrors.md) | 外网可达性取决于加速器，是变量不是常量 | 仅本机网络 | 2026-09-27，加速器开/关 |
+| [0013](./0013-localhost-not-ip-literal.md) | 探测本地服务用 localhost，不要用 127.0.0.1 | 仅本机 | — |
+| [0014](./0014-android-toolchain-without-studio.md) | 装安卓工具链用 cmdline-tools，不需要 Android Studio | 仅本机 | — |
+| [0008](./0008-single-gate-command.md) | 单一门禁命令，降低执行偏差 | 本仓库流程 | — |
+| [0011](./0011-decidable-trigger-for-proactive-work.md) | 想让 AI 主动做的事，必须给出可对照的触发条件 | 本仓库流程 | — |
+| [0007](./0007-document-own-limitations.md) | 文档自陈局限，防止 AI 把已知取舍当 bug 修 | 本仓库文档 | — |
+| [0009](./0009-split-large-docs.md) | 文档过大要拆分，文档结构本身就是接口 | 本仓库文档 | — |
 
 ## 相关文档
 
