@@ -362,6 +362,7 @@ export default function EpubReaderView({
   // iframe 的 document 一起交给它，否则点在正文上收不到事件。
   usePageTurn({
     targetRef: bodyRef,
+    viewportRef,
     innerDocument,
     onMove: move,
     onToggleChrome: toggleChrome,

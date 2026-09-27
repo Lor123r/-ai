@@ -416,6 +416,63 @@ test('系统返回键能回书架，抽屉开着时先关抽屉', async () => {
   }
 })
 
+/**
+ * 点正文左右两侧要能翻页，而且分区要按「看得见的正文列」算。
+ *
+ * 曾经的算法拿外层 .reader__body 的宽度当分母。外层是整窗宽（桌面 1087px），
+ * 正文列是 min(900px, 100%) 居中（桌面 900px，左边空出 93px）。于是用户点在
+ * 正文列 15% 处，算出来是 0.19，落进中间死区 —— 正文列中间 70% 全都不翻页，
+ * 看起来就是「翻页坏了」。手机上正文列与外层同宽，但死区仍有 40%，
+ * 点哪儿都不动。
+ *
+ * 这个测试直接按正文列的百分比点，覆盖左中右三段。
+ */
+test('点正文左右两侧能翻页，中间留给唤出工具栏', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await clickElementCenter(page.locator('.book-card__cover'))
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      // 点正文列右侧 70% 处：翻到下一章。
+      // 70% 是刻意的：按外层容器算的话这里是 0.54，落进死区，翻不动。
+      await tapViewport(page, 0.7)
+      await expect.poll(() => chapterText(page)).toContain('第 2 章正文')
+
+      // 点正文列左侧 30% 处：翻回上一章。
+      // 同样刻意：按外层容器算是 0.23，虽然还在左区，但离边界很近。
+      await tapViewport(page, 0.3)
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+
+      // 点正文列正中：不翻页，只切换工具栏显隐。
+      // 桌面窗口够宽，工具栏初始是显示的，所以这一下是收起。
+      const header = reader.locator('.reader__header')
+      await expect(header).toHaveAttribute('data-visible', 'true')
+      await tapViewport(page, 0.5)
+      await expect(header).toHaveAttribute('data-visible', 'false')
+      await expect.poll(() => chapterText(page)).toContain('第 1 章正文')
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
 test('阅读进度会落盘，重开应用后从上次的位置继续', async () => {
   const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
   const sourceDir = join(userDataDir, 'sources')
@@ -722,6 +779,45 @@ test('重复导入同一本书会被跳过而不是复制第二份', async () =>
  * 收集章节 iframe 里的正文。
  * epub.js 一章一个 iframe，转场期间新旧两章会同时存在，所以不能只认第一个。
  */
+/**
+ * 按正文列的横向百分比点一下。
+ *
+ * 必须点进 iframe 内部：正文在 iframe 里，父文档上的 pointer 事件收不到。
+ * 用 `page.mouse` 在跨文档 iframe 上会挂住，所以直接在 iframe 的 document 里
+ * 派发 PointerEvent。
+ */
+async function tapViewport(page: Page, fraction: number): Promise<void> {
+  const frame = page.frames().find((candidate) => candidate !== page.mainFrame())
+  if (!frame) throw new Error('正文 iframe 还没出现')
+  const body = frame.locator('body')
+  const box = await body.boundingBox()
+  if (!box) throw new Error('正文 iframe 量不到尺寸')
+  const x = box.x + box.width * fraction
+  const y = box.y + box.height / 2
+  // 借 element 拿到 DOM 类型：e2e 的 tsconfig 没有 dom lib，
+  // 直接写 document / PointerEvent 会报 TS2584。
+  await body.evaluate(
+    (element, point) => {
+      const doc = element.ownerDocument
+      const view = doc.defaultView
+      if (!view) return
+      const target = doc.elementFromPoint(point.x, point.y) ?? element
+      const options = {
+        clientX: point.x,
+        clientY: point.y,
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: 'touch',
+        isPrimary: true
+      }
+      target.dispatchEvent(new view.PointerEvent('pointerdown', options))
+      target.dispatchEvent(new view.PointerEvent('pointerup', options))
+    },
+    { x, y }
+  )
+}
+
 async function chapterText(page: Page): Promise<string> {
   const parts: string[] = []
   for (const frame of page.frames()) {

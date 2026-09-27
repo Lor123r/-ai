@@ -86,6 +86,7 @@ export default function TxtReaderView({
   const repository = useBookRepository()
   const settingsRepository = useSettingsRepository()
   const flowRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const writerRef = useRef<LocatorWriter | null>(null)
   /** 打开时读到的存档进度；等排版量出总页数后被反解使用，用完即弃。 */
   const pendingRestore = useRef<ReadingLocator | null>(null)
@@ -282,6 +283,7 @@ export default function TxtReaderView({
   // 只绑外层容器就够，所以不传 innerDocument。
   usePageTurn({
     targetRef: flowRef,
+    viewportRef,
     onMove: move,
     onToggleChrome: toggleChrome,
     disabled: status !== 'ready'
@@ -320,6 +322,7 @@ export default function TxtReaderView({
       chromeVisible={chromeVisible}
     >
       <div
+        ref={viewportRef}
         className="reader__viewport reader__viewport--text"
         data-status={status}
         style={viewportStyle}
