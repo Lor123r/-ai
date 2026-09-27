@@ -115,6 +115,7 @@ release 附件（几十 MB 以上）会静默挂起；git push 与 gh 不受影�
 | [0004](./0004-pure-function-for-untestable-env.md) | 环境测不到的逻辑抽成纯函数 | 所有依赖环境的逻辑 |
 | [0003](./0003-load-bearing-order.md) | 顺序有依赖的步骤要在代码里标注"承重" | 所有有顺序依赖的初始化 |
 | [0019](./0019-comments-and-docs-write-what-readers-cannot-see.md) | 注释与文档只写读者看不出来的东西 | 所有注释与文档 |
+| [0021](./0021-target-node-ignores-capture-flag.md) | 事件在目标节点上不区分捕获与冒泡，只按注册顺序跑 | 所有多监听器抢同一事件的场景 |
 
 ### 三、环境与流程（换个时间/机器可能就不一样）
 
