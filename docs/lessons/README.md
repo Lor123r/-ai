@@ -125,6 +125,7 @@ release 附件（几十 MB 以上）会静默挂起；git push 与 gh 不受影�
 | [0014](./0014-android-toolchain-without-studio.md) | 装安卓工具链用 cmdline-tools，不需要 Android Studio | 仅本机 | — |
 | [0008](./0008-single-gate-command.md) | 单一门禁命令，降低执行偏差 | 本仓库流程 | — |
 | [0011](./0011-decidable-trigger-for-proactive-work.md) | 想让 AI 主动做的事，必须给出可对照的触发条件 | 本仓库流程 | — |
+| [0020](./0020-tool-refusal-is-not-a-retry-signal.md) | 工具返回「无变化」是结论不是失败，不要原样重试 | 所有 AI 工具调用 | — |
 
 ### 已合并的条目
 
