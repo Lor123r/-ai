@@ -18,6 +18,7 @@ import { decodeText } from './decodeText'
 import { createLocatorWriter, type LocatorWriter } from './locatorWriter'
 import { readerAppearanceStyle, type ReaderAppearanceStyle } from './readerAppearance'
 import { usePageTurn } from './usePageTurn'
+import { useBackNavigation } from './useBackNavigation'
 import { useChromeVisibility } from './useChromeVisibility'
 import {
   clampPage,
@@ -104,6 +105,14 @@ export default function TxtReaderView({
   const [panel, setPanel] = useState<ReaderPanel>('none')
   // 阅读时收起顶栏与底栏，点屏幕中间唤出
   const { chromeVisible, toggleChrome } = useChromeVisibility()
+  // 系统返回键：抽屉开着就先关抽屉，否则交给外层回书架
+  useBackNavigation({
+    onBack: () => {
+      if (panel === 'none') return false
+      setPanel('none')
+      return true
+    }
+  })
   const { settings, update } = useReaderSettings(settingsRepository, now)
   const settingsReady = settings !== null
   const pageMargin = settings?.pageMargin ?? 0

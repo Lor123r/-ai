@@ -342,13 +342,72 @@ test('点开书架上的书会进入阅读器，翻页后能返回书架', async
       await expect(reader.getByText('阅读中')).toBeVisible()
 
       await reader.getByRole('button', { name: '返回书架' }).click()
-      await expect(reader).toHaveCount(0)
+      // 返回走 history.back()，是异步的：先等书架出现，再断言阅读器没了。
+      // 直接 toHaveCount(0) 会在 popstate 到达前就判失败。
       await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
+      await expect(reader).toHaveCount(0)
       await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
 
       // 热区铺满之后，书名按钮自己也得还能点
       await page.getByRole('button', { name: '三体', exact: true }).click()
       await expect(reader).toBeVisible()
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await rm(userDataDir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * 系统返回键（安卓返回键 / 浏览器后退）必须能回书架。
+ *
+ * 这是手机上唯一不依赖「唤起隐藏顶栏」的返回路径：顶栏在窄屏下默认收起，
+ * 而唤出它要点屏幕中间那条看不见的带子，经常点不中。返回键是安卓用户的
+ * 肌肉记忆，不需要任何视觉提示。
+ *
+ * 用 page.goBack() 触发，它走的就是 popstate —— 与安卓返回键同一条路径。
+ */
+test('系统返回键能回书架，抽屉开着时先关抽屉', async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), 'ebook-reader-e2e-'))
+  const sourceDir = join(userDataDir, 'sources')
+  await mkdir(sourceDir, { recursive: true })
+  const epubPath = await buildEpubFile(join(sourceDir, '三体.epub'), { title: '三体', author: '刘慈欣' })
+
+  try {
+    const app = await electron.launch({ args: [mainEntry], env: launchEnv(userDataDir) })
+    try {
+      const page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+      await stubFilePicker(app, [epubPath])
+
+      await page.getByRole('button', { name: '导入书籍' }).click()
+      await expect(page.getByRole('heading', { name: '三体' })).toBeVisible()
+
+      const reader = page.getByRole('region', { name: '正在阅读《三体》' })
+      await clickElementCenter(page.locator('.book-card__cover'))
+      await expect(reader.getByText('阅读中')).toBeVisible()
+
+      // 抽屉开着时，返回键先关抽屉，不离开阅读器 —— 安卓的标准行为
+      await reader.getByRole('button', { name: '目录' }).click()
+      const drawer = reader.locator('.reader__drawer')
+      await expect(drawer).toBeVisible()
+
+      await page.goBack()
+      await expect(drawer).toHaveCount(0)
+      await expect(reader).toBeVisible()
+
+      // 抽屉关掉之后再按一次，才回书架
+      await page.goBack()
+      await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
+      await expect(reader).toHaveCount(0)
+
+      // 回到书架后，再点开同一本书仍然进得去 —— 压栈与出栈成对，
+      // 不会因为多退了一层而让返回键失灵
+      await clickElementCenter(page.locator('.book-card__cover'))
+      await expect(reader.getByText('阅读中')).toBeVisible()
+      await page.goBack()
+      await expect(page.getByRole('heading', { name: '书架' })).toBeVisible()
     } finally {
       await app.close()
     }

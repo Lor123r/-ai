@@ -30,6 +30,7 @@ import { readToc } from './epubToc'
 import { toRelocationInput } from './epubRelocation'
 import { createLocatorWriter, type LocatorWriter } from './locatorWriter'
 import { usePageTurn } from './usePageTurn'
+import { useBackNavigation } from './useBackNavigation'
 import { useChromeVisibility } from './useChromeVisibility'
 import { applyReaderSettings } from './readerAppearance'
 import { useBookAnnotations } from './useBookAnnotations'
@@ -141,6 +142,14 @@ export default function EpubReaderView({
   const [innerDocument, setInnerDocument] = useState<Document | null>(null)
   // 阅读时收起顶栏，点屏幕中间唤出
   const { chromeVisible, toggleChrome } = useChromeVisibility()
+  // 系统返回键：抽屉开着就先关抽屉，否则交给外层回书架
+  useBackNavigation({
+    onBack: () => {
+      if (panel === 'none') return false
+      setPanel('none')
+      return true
+    }
+  })
   const { settings, update } = useReaderSettings(settingsRepository, now)
   const {
     annotations,

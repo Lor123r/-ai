@@ -383,6 +383,14 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  /*
+   * 横向手势归我们，纵向滚动留给 WebView。
+   *
+   * 不写这条时，安卓 WebView 会把横向滑动当成滚动/平移吃掉，pointerup 根本
+   * 收不到 —— 表现是「滑动翻页在手机上完全没反应，只能点底栏按钮」。
+   * 用 pan-y 而不是 none：正文本身要能上下滚，全禁掉会让长段落滚不动。
+   */
+  touch-action: pan-y;
 }
 
 /*
