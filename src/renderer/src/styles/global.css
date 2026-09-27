@@ -197,7 +197,6 @@ body {
   align-items: center;
   justify-content: center;
   aspect-ratio: 3 / 4;
-  overflow: hidden;
   background: #efe9dc;
   border-radius: 4px;
 }
@@ -206,6 +205,7 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 4px;
 }
 
 .book-card__cover-letter {
@@ -213,6 +213,22 @@ body {
   font-size: 34px;
   font-weight: 600;
   letter-spacing: 0.08em;
+}
+
+/*
+ * 书名按钮的盒子只有文字那么大（实测 45x21），点封面、点作者、点进度条都落空。
+ * 用覆盖层把可点范围铺满整张卡片，比再挂几个按钮好：交互元素仍然只有一个，
+ * 封面里的 img 也不必改成 button。
+ *
+ * 覆盖层必须挂在 .book-card 上，不能挂在 .book-card__title 上。
+ * 挂在标题上时，包含块是标题那个 overflow: hidden 的盒子，覆盖层被裁成
+ * 标题那一小块 —— 点封面照样没反应。挂在卡片上，包含块是卡片本身，
+ * 中间那层 static 定位的祖先不在包含块链上，裁不到它。
+ */
+.book-card__open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
 }
 
 .book-card__title {
@@ -236,21 +252,6 @@ body {
   font-weight: inherit;
   text-align: left;
   cursor: pointer;
-}
-
-/*
- * 把开书的热区撑满整张卡片。
- *
- * 全卡只有这一个 onClick，可它的盒子只有书名那点大（实测 45x21），而用户会去点
- * 封面（162x216）—— 那里原本谁都不响应，点了像没反应。用覆盖层把可点范围铺满卡片，
- * 比再挂一个按钮好：交互元素仍然只有一个，封面里的 img 也不必改成 button。
- * `.book-card__title` 的 overflow 不会裁掉它 —— 覆盖层的包含块是 .book-card，
- * 中间那层 static 定位的祖先不在包含块链上，裁不到它。
- */
-.book-card__open::after {
-  content: '';
-  position: absolute;
-  inset: 0;
 }
 
 .reader {
