@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { App as CapacitorApp } from '@capacitor/app'
 import { AnnotationRepositoryProvider } from '@renderer/data/AnnotationRepositoryProvider'
 import { AnnotationTransferProvider } from '@renderer/data/AnnotationTransferProvider'
 import { BookContentReaderProvider } from '@renderer/data/BookContentReaderProvider'
@@ -47,6 +49,39 @@ export default function App(): React.JSX.Element {
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  /**
+   * 安卓原生返回键。
+   *
+   * **`popstate` 在安卓宿主里靠不住。** Capacitor 的 `BridgeActivity` 收到返回键后
+   * 先问 JS 有没有 `backButton` 监听，没有才交给 WebView 的 `goBack()`；而
+   * `goBack()` 只在 WebView 自己还有历史时才触发 `popstate`。应用是单页，
+   * 首屏之后 history 里只有我们 push 的那一层，一旦它被消费掉，返回键就直接
+   * 退出 App —— 用户看到的是「返回键失灵」。
+   *
+   * 所以安卓上直接听原生事件，走同一个 `handleBackPress` 分发：
+   * 阅读器要就给它，不要就回书架。浏览器宿主没有这个事件，`Capacitor.isNativePlatform()`
+   * 为 false 时整段跳过，E2E 仍走 `popstate` 那条路。
+   */
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+
+    const listener = CapacitorApp.addListener('backButton', () => {
+      // 阅读器接管了（比如关掉了抽屉），什么都不做
+      if (handleBackPress()) return
+      // 在阅读器里：回书架，并把 history 里那一层退掉
+      if (isReaderState(window.history.state)) {
+        window.history.back()
+        return
+      }
+      // 已经在书架：交回系统，让 App 退出
+      void CapacitorApp.exitApp()
+    })
+
+    return () => {
+      void listener.then((handle) => handle.remove())
+    }
   }, [])
 
   /**

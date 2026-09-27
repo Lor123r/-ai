@@ -3,10 +3,13 @@ import { useEffect, useRef } from 'react'
 /**
  * 系统返回键（安卓返回键 / 浏览器后退）的接管。
  *
- * 为什么不用 `@capacitor/app` 的 `backButton` 事件：那个事件只在安卓原生宿主里存在，
- * 浏览器宿主（e2e-web 那套）没有，于是同一份代码在两种宿主下行为不同，E2E 也测不到。
- * 走 History API 则两边同一条路径 —— 安卓返回键本来就会触发 `popstate`，
- * 浏览器里 `history.back()` 触发的也是它。
+ * ## 两条入口，一个分发
+ *
+ * 浏览器宿主走 `popstate`（`history.back()` 触发的就是它）；安卓原生宿主额外
+ * 听 `@capacitor/app` 的 `backButton` —— 因为 Capacitor 的 `BridgeActivity`
+ * 在 JS 没登记 `backButton` 监听时会退回 `webView.goBack()`，而单页应用的
+ * WebView 历史一旦被消费完，返回键就直接退出 App。两条入口都调
+ * `handleBackPress()`，判定逻辑只有这一份。
  *
  * ## 为什么是「注册回调」而不是「各自监听 popstate」
  *

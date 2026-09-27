@@ -1,4 +1,4 @@
-import type { CapacitorConfig } from '@capacitor/cli'
+﻿import type { CapacitorConfig } from '@capacitor/cli'
 
 /**
  * 安卓宿主的 Capacitor 配置。
